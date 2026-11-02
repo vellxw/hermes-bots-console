@@ -23,20 +23,22 @@ Hermes Bot Command adds a **Bots** tab to the Hermes Dashboard. It gives you:
 - **Mobile-first** — full touch support, fullscreen viewer, single-column layout
 - **Desktop 3-pane workspace** — rail + chat + inspector from 1180px up
 
-### Preview
+### Screenshots
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  ┌──────┐  ┌──────────────────────┐  ┌──────────────┐ │
-│  │ Bots │  │     Chat central      │  │  Inspector   │ │
-│  │      │  │                      │  │  ┌─────────┐ │ │
-│  │ bot1 │  │  > Hola, bot1        │  │  │  Live   │ │ │
-│  │ bot2 │  │  < Hola!             │  │  │  Screen  │ │ │
-│  │ bot3 │  │                      │  │  │  (view) │ │ │
-│  │      │  │  [composer]          │  │  └─────────┘ │ │
-│  └──────┘  └──────────────────────┘  └──────────────┘ │
-└─────────────────────────────────────────────────────────┘
-```
+![Desktop workspace](docs/demo.svg)
+
+*Desktop 3-pane workspace with live Bot Screen in the inspector (animated).*
+
+| Mobile (390px) | Desktop (1180px+) |
+|---|---|
+| Single column, fullscreen touch viewer | Rail + Chat + Inspector |
+| `view=chat` → fullscreen viewer | `view=chat` → inline monitor |
+| Touch: 1 finger = mouse, 2 fingers = pan/zoom | Click preview = view only |
+| "Tomar control" → auto-lease | "Tomar control" → expand + auto-lease |
+
+### Animated demo
+
+The SVG above is animated: the typing indicator pulses, the cursor blinks, and the screen content updates in real time. Open `docs/demo.svg` in a browser to see the full animation.
 
 ---
 
@@ -141,18 +143,34 @@ To roll back, stop the Dashboard, restore the previous plugin bundle from the re
 
 ---
 
-## Development
+## Contributing
 
-Requirements: Python 3.10+, Node.js 18+, Hermes for manual authenticated checks. Node and Python are development requirements; end users receive checked-in Dashboard bundles.
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+### Quick contribution checklist
+
+- [ ] Fork the repo and create a feature branch
+- [ ] Write a regression test first (RED → GREEN)
+- [ ] Run `npm run test:all`
+- [ ] Ensure no credentials or workstation paths in commits
+- [ ] Open a PR against `main` with a clear description
+
+### Development setup
 
 ```bash
-npm run test:all
-npm run pack
+git clone https://github.com/vellxw/hermes-bots-console.git
+cd hermes-bots-console
+npm run test:all   # verify + build + tests
+npm run pack       # build release archive
 ```
 
-The first command checks manifest/SRI, scans tracked public files for workstation paths and secret-like values, validates JavaScript syntax and runs the Node and Python suites. `npm run pack` rebuilds the checked-in cache-busted assets, runs the public verification gate and creates a deterministic `dist/hermes-bots-console-<version>.tar.gz` archive. The archive excludes catalog metadata, backups, reports and mutable runtime state. Authenticated desktop and browser probes are intentionally excluded from CI and must never be treated as portable certification.
+### Areas we need help with
 
-For a focused behavior change, write the regression test first, run it to observe RED, implement the smallest fix, then run the full suite. Keep credentials, browser profiles, session dumps, screenshots and internal reports outside the repository.
+- 🌐 **Internationalization** — more languages beyond Spanish/English
+- 📱 **Mobile testing** — real Android/iOS device verification
+- 🔒 **Security review** — profile isolation and secret handling
+- 🎨 **Design** — improved mobile UX and accessibility
+- 📖 **Documentation** — tutorials and integration guides
 
 ---
 
