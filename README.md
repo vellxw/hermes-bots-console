@@ -1,32 +1,74 @@
 # Hermes Bot Command
 
-Hermes Bot Command adds a mobile-first Bots tab to the Hermes Dashboard. It keeps a roster of profiles, opens profile-scoped chat sessions, configures native groups, exposes Turbo policy controls and can connect to the isolated desktop viewer when the gateway provides Hermes Bot Desktop.
+> Mobile-first Bot roster, per-bot models, native groups, skills and live Bot Screens for the [Hermes](https://github.com/NousResearch/hermes-agent) Dashboard.
 
-The repository is prepared as a release candidate. The public GitHub owner, catalog URL and launch URLs remain placeholders until the maintainer authorizes those destinations.
+[![CI](https://github.com/vellxw/hermes-bots-console/actions/workflows/ci.yml/badge.svg)](https://github.com/vellxw/hermes-bots-console/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/vellxw/hermes-bots-console?include_prereleases)](https://github.com/vellxw/hermes-bots-console/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Hermes >=0.21.6](https://img.shields.io/badge/Hermes-%3E%3D0.21.6-purple)](https://github.com/NousResearch/hermes-agent)
+
+Published as open source by [@vellxw](https://github.com/vellxw). Repository: [vellxw/hermes-bots-console](https://github.com/vellxw/hermes-bots-console).
+
+---
+
+## What it does
+
+Hermes Bot Command adds a **Bots** tab to the Hermes Dashboard. It gives you:
+
+- **Roster of profiles** — view all your Hermes bots at a glance
+- **Per-bot chat** — open profile-scoped chat sessions directly from the roster
+- **Native groups** — create and manage Hermes groups with member events
+- **Turbo policy** — Planning, Simulation and Autonomous modes per profile
+- **Live Bot Screens** — watch and control a bot's isolated desktop in real time
+- **Mobile-first** — full touch support, fullscreen viewer, single-column layout
+- **Desktop 3-pane workspace** — rail + chat + inspector from 1180px up
+
+### Preview
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  ┌──────┐  ┌──────────────────────┐  ┌──────────────┐ │
+│  │ Bots │  │     Chat central      │  │  Inspector   │ │
+│  │      │  │                      │  │  ┌─────────┐ │ │
+│  │ bot1 │  │  > Hola, bot1        │  │  │  Live   │ │ │
+│  │ bot2 │  │  < Hola!             │  │  │  Screen  │ │ │
+│  │ bot3 │  │                      │  │  │  (view) │ │ │
+│  │      │  │  [composer]          │  │  └─────────┘ │ │
+│  └──────┘  └──────────────────────┘  └──────────────┘ │
+└─────────────────────────────────────────────────────────┘
+```
+
+---
 
 ## Quickstart
 
-Install Hermes first using the official Hermes instructions for Linux, macOS or Windows. Then install the plugin from the catalog:
+### 1. Install Hermes
 
-```text
-hermes plugins install hermes-bots-console
+Follow the official [Hermes installation guide](https://github.com/NousResearch/hermes-agent) for Linux, macOS or Windows.
+
+### 2. Install the plugin
+
+```bash
+hermes plugins install vellxw/hermes-bots-console
 hermes plugins enable hermes-bots-console
 hermes dashboard
 ```
 
-If the catalog entry is not available yet, install the matching release archive manually through the Hermes plugin installation flow. Do not copy mutable state into the plugin directory.
+### 3. Open the Dashboard
 
-Open the authenticated Dashboard and choose Bots. The first useful path is:
+Navigate to the authenticated Dashboard and choose **Bots**. The first useful path is:
 
 1. Check that the expected Hermes profiles appear.
 2. Open a bot and send a harmless message.
 3. Create or select a native Hermes group and verify its member events in the room log.
 4. Use Planning or Simulation while testing. Turbo Autonomous still pauses for login, MFA/CAPTCHA, payment, irreversible, legal, security and other high-risk operations.
 
+---
+
 ## What is supported
 
 | Surface | Linux client | macOS client | Windows client |
-| --- | --- | --- | --- |
+|---|---|---|---|
 | Dashboard roster and chat | Supported with Hermes | Supported with Hermes | Supported with Hermes |
 | Native groups | Supported | Supported | Supported |
 | Profile-scoped Turbo policy | Supported | Supported | Supported |
@@ -34,6 +76,8 @@ Open the authenticated Dashboard and choose Bots. The first useful path is:
 | Isolated desktop viewer | Supported when the gateway has Bot Desktop dependencies | Use a remote Linux gateway | Use a remote Linux gateway |
 
 Client OS and gateway OS are separate. A Windows or macOS Dashboard client can use a remote Linux Hermes gateway. The viewer is not declared cross-platform until each gateway implementation has been exercised.
+
+---
 
 ## Security model
 
@@ -44,7 +88,9 @@ Client OS and gateway OS are separate. A Windows or macOS Dashboard client can u
 - Grants store account labels and capabilities, never passwords, tokens, cookies, OTPs, connection strings or chat payloads.
 - The isolated viewer must not be exposed as public RFB, VNC, websockify, RDP or SSH.
 
-Read SECURITY.md before connecting an account. Do not paste credentials or MFA codes into chat, issues or pull requests.
+Read [SECURITY.md](SECURITY.md) before connecting an account. Do not paste credentials or MFA codes into chat, issues or pull requests.
+
+---
 
 ## Architecture
 
@@ -59,10 +105,12 @@ No authenticated screenshots or GIFs are bundled in the repository. Visual certi
 - `dashboard/storage.py` resolves Hermes profile data directories, performs atomic private writes and migrates old installed-directory state without deleting the old copy.
 - `dashboard/contracts.mjs` and `dashboard/contracts.py` define the shared profile, lease, authorization, multimodal and dry-run contracts.
 - `dashboard/browser-flow.mjs` contains the local, headed, visible and profile-isolated browser policy.
-- `dashboard/novnc` contains the vendored noVNC client and pako dependency. Their original licenses remain in place; see NOTICE.
+- `dashboard/novnc` contains the vendored noVNC client and pako dependency. Their original licenses remain in place; see [NOTICE](NOTICE).
 - `docs/bot-screen-lifecycle.md` documents the contextual desktop monitor, memory gate, measurement phases and rollback policy.
 
 The plugin does not patch Hermes core. If a required Hermes hook is not public, the capability remains documented as unavailable rather than using an internal override.
+
+---
 
 ## Data and migration
 
@@ -78,43 +126,57 @@ Older local installations may have `groups.json`, `turbo.json`, `attachments/<pr
 
 To roll back, stop the Dashboard, restore the previous plugin bundle from the release archive, and keep the migrated profile data untouched until the previous version has been verified. Uninstalling the plugin does not delete profile data; remove it only after exporting anything you need and confirming the target profile.
 
+---
+
 ## Troubleshooting
 
-- Plugin absent: run `hermes plugins validate` and check that the manifest entry, CSS and SRI match.
-- Chat disconnected: verify the authenticated Dashboard session and the selected profile's Hermes session. Use Reconnect; do not reuse another profile's browser or display.
-- Group room empty: the configuration view is not the native room. Open the Hermes group room and inspect `groups.log` for `message.member` events.
-- Viewer stuck connecting: inspect the selected profile's `display.status`, then `display.start` and `display.observe`. Low memory, missing Linux Bot Desktop dependencies, a stale lease or a stale ticket are common causes.
-- Desktop monitor outside chat: this is intentional. The PC inspector uses the live viewer only in `view=chat`; roster, Marketplace and groups keep a zero-RFB preview. On low memory, follow the inline `blocked_low_memory` reason instead of lowering the configured floor.
-- Windows/macOS viewer unavailable: use a Linux gateway. Do not expose the RFB socket to the internet.
-- Voice unavailable: configure the Hermes/provider adapter. The plugin reports the adapter as unavailable instead of fabricating a transcript.
-- Lost installation: reinstall the same plugin version. Profile-scoped state is outside the installed bundle.
+- **Plugin absent:** run `hermes plugins validate` and check that the manifest entry, CSS and SRI match.
+- **Chat disconnected:** verify the authenticated Dashboard session and the selected profile's Hermes session. Use Reconnect; do not reuse another profile's browser or display.
+- **Group room empty:** the configuration view is not the native room. Open the Hermes group room and inspect `groups.log` for `message.member` events.
+- **Viewer stuck connecting:** inspect the selected profile's `display.status`, then `display.start` and `display.observe`. Low memory, missing Linux Bot Desktop dependencies, a stale lease or a stale ticket are common causes.
+- **Desktop monitor outside chat:** this is intentional. The PC inspector uses the live viewer only in `view=chat`; roster, Marketplace and groups keep a zero-RFB preview. On low memory, follow the inline `blocked_low_memory` reason instead of lowering the configured floor.
+- **Windows/macOS viewer unavailable:** use a Linux gateway. Do not expose the RFB socket to the internet.
+- **Voice unavailable:** configure the Hermes/provider adapter. The plugin reports the adapter as unavailable instead of fabricating a transcript.
+- **Lost installation:** reinstall the same plugin version. Profile-scoped state is outside the installed bundle.
+
+---
 
 ## Development
 
 Requirements: Python 3.10+, Node.js 18+, Hermes for manual authenticated checks. Node and Python are development requirements; end users receive checked-in Dashboard bundles.
 
-```text
+```bash
 npm run test:all
 npm run pack
 ```
 
 The first command checks manifest/SRI, scans tracked public files for workstation paths and secret-like values, validates JavaScript syntax and runs the Node and Python suites. `npm run pack` rebuilds the checked-in cache-busted assets, runs the public verification gate and creates a deterministic `dist/hermes-bots-console-<version>.tar.gz` archive. The archive excludes catalog metadata, backups, reports and mutable runtime state. Authenticated desktop and browser probes are intentionally excluded from CI and must never be treated as portable certification.
 
-For a focused behavior change, write the regression test first, run it to observe RED, implement the smallest fix, run GREEN and then execute the full suite. Keep credentials, browser profiles, session dumps, screenshots and internal reports outside the repository.
+For a focused behavior change, write the regression test first, run it to observe RED, implement the smallest fix, then run the full suite. Keep credentials, browser profiles, session dumps, screenshots and internal reports outside the repository.
+
+---
 
 ## Release and catalog status
 
-The current local release candidate is `0.5.0-rc.1`. `catalog-entry.yaml` describes the honest capabilities and known Linux viewer limitation. Its source URL, owner and release ref are placeholders until an authorized repository exists. No Nous catalog merge is claimed by this repository.
+The current release is **`0.5.0-rc.1`**. `catalog-entry.yaml` describes the honest capabilities and known Linux viewer limitation.
 
 Before a public release, the maintainer must:
 
-1. Replace the catalog URL and owner with the authorized repository.
+1. Replace the catalog URL and owner with the authorized repository. ✅ Done
 2. Run `npm run pack` and record the complete SHA-256 printed by the command for `dist/hermes-bots-console-0.5.0-rc.1.tar.gz`.
 3. Run `hermes plugins validate` and `hermes doctor` on the supported Hermes version.
 4. Exercise installation on each available client/gateway combination.
 5. Run an authenticated Dashboard visual check before claiming visual certification.
 6. Publish only after reviewing the release diff and third-party notices.
 
+---
+
 ## License
 
-Hermes Bot Command code is MIT licensed. See LICENSE. Vendored noVNC and pako code retain their upstream licenses; see NOTICE and the files under `dashboard/novnc`.
+Hermes Bot Command code is MIT licensed. See [LICENSE](LICENSE). Vendored noVNC and pako code retain their upstream licenses; see [NOTICE](NOTICE) and the files under `dashboard/novnc`.
+
+---
+
+<p align="center">
+  <sub>Built with ❤️ for the Hermes community · <a href="https://github.com/vellxw/hermes-bots-console">vellxw/hermes-bots-console</a></sub>
+</p>
