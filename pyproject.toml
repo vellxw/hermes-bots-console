@@ -1,0 +1,14 @@
+[project]
+name = "hermes-bots-console"
+version = "0.5.0rc1"
+description = "Hermes Dashboard plugin for bot roster, chat, groups and profile-scoped automation"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+readme = "README.md"
+authors = [{ name = "Hermes Bot Command contributors" }]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+norecursedirs = ["backups", "reports", ".git", "__pycache__", "node_modules"]
+addopts = "-ra"

@@ -1,0 +1,22 @@
+{
+  "name": "hermes-bots-console",
+  "label": "Bots",
+  "description": "Mobile-first Bot roster, per-bot models, groups, skills and live Bot Screens.",
+  "icon": "Users",
+  "version": "0.5.0-rc.1",
+  "tab": {
+    "path": "/bots",
+    "position": "after:sessions"
+  },
+  "slots": [
+    "chat:top"
+  ],
+  "entry": "index-v054.js",
+  "css": "style-v054.css",
+  "interaction_core": "interaction-core-v001.mjs",
+  "contracts": "contracts-v001.mjs",
+  "browser_flow": "browser-flow-v001.mjs",
+  "api": "plugin_api.py",
+  "source": "user",
+  "integrity": "sha384-clslcCBwwnB0GG2onwJddZN8AhisiYEosNDGJs8Iz4Pch51gMfco9NGbWHyoBbcw"
+}

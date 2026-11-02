@@ -1,0 +1,132 @@
+{
+  "contract_version": "1",
+  "name": "hermes-bots-console",
+  "scope": "profile",
+  "principles": [
+    "Todo estado durable se identifica por profile y no contiene credenciales.",
+    "Cada browser-profile, desktop, display, socket y lease tiene una identidad profile-scoped.",
+    "El ledger de autorizaciones guarda capability y alcance, nunca secretos ni contenido inline.",
+    "La auditoría registra metadatos operativos mínimos, no texto de conversación ni audio.",
+    "Las respuestas multimodales transportan descriptores y storage_key; el contenido binario queda fuera del chat."
+  ],
+  "forbidden_fields": ["password", "token", "secret", "cookie", "credential", "authorization", "api_key", "private_key", "data_url", "base64", "audio_bytes", "file_bytes"],
+  "schemas": {
+    "profile_state": {
+      "required": ["contract_version", "profile", "updated_at", "session", "turbo", "ui"],
+      "properties": {
+        "contract_version": "string, currently 1",
+        "profile": "lowercase [a-z0-9][a-z0-9_-]{0,63}",
+        "updated_at": "unix milliseconds",
+        "session": {"stored_id": "string", "runtime_id": "string"},
+        "turbo": {"mode": "planning|simulation|autonomous", "grants": "authorization_grant[]"},
+        "ui": {"route": "roster|chat|groups|group", "draft": "string, local-only"}
+      }
+    },
+    "isolation_binding": {
+      "required": ["contract_version", "profile", "browser_profile", "desktop_name", "display", "gateway_socket", "lease"],
+      "properties": {
+        "browser_profile": "path or opaque id containing profile",
+        "desktop_name": "hermes:<profile>",
+        "display": {"number": "non-negative integer", "socket": "profile-scoped socket"},
+        "gateway_socket": "profile-scoped socket",
+        "lease": {"profile": "same profile", "holder": "agent|human|none", "viewer_id": "opaque id", "status": "held|released", "expires_at": "unix milliseconds|null"}
+      }
+    },
+    "browser_context": {
+      "required": ["contract_version", "browser_flow_version", "profile", "browser_profile", "browser", "desktop", "display", "gateway_socket", "lease"],
+      "properties": {
+        "browser.kind": "local",
+        "browser.visible": true,
+        "browser.headed": true,
+        "browser.headless": false,
+        "desktop.name": "hermes:<profile>",
+        "display.env.DISPLAY": "matches display.number",
+        "display.env.XAUTHORITY": "profile-scoped path"
+      },
+      "policy": "Only the local, profile-owned Bot Desktop may be used; no cloud/headless browser or shared cookies."
+    },
+    "account_detection": {
+      "required": ["profile", "service", "source", "accounts", "selected_account", "selection_required", "stages", "evidence", "status", "stop"],
+      "properties": {
+        "source": "browser-profile",
+        "status": "ready|needs_selection|needs_verification|blocked",
+        "stages": "browser_open|provider_consent|hermes_enabled|account_active|action_executed",
+        "evidence": "readback identifiers only; no page content or credentials"
+      },
+      "policy": "Multiple accounts require one explicit selection; a selected account can be reused only while it remains present in the same browser-profile."
+    },
+    "browser_operation": {
+      "required": ["operation_id", "profile", "account", "browser_profile", "tool", "mode", "steps", "evidence", "expected_result", "risk", "authorization", "status", "stop"],
+      "properties": {
+        "tool": "local-browser|computer_use",
+        "mode": "planning|simulation|autonomous",
+        "status": "planned|prepared|ready|blocked|executed",
+        "risk": "explicit gates for MFA/CAPTCHA/login/payment/irreversible/mass-delete/security/legal/high-risk"
+      },
+      "policy": "Every operation exposes profile, account, tool, steps, evidence and expected result. Planning and simulation never execute; autonomous requires a current grant and still stops at risk gates."
+    },
+    "browser_dry_run": {
+      "required": ["context", "snapshot", "ambiguous", "detection", "planning", "simulation", "autonomous", "blocked"],
+      "properties": {"site": "example.com only", "external_effects": false}
+    },
+    "authorization_grant": {
+      "required": ["grant_id", "contract_version", "profile", "service", "account", "capabilities", "persistent", "scope", "owner", "status", "granted_at", "expires_at"],
+      "properties": {
+        "scope": "profile when persistent=true, otherwise once",
+        "owner": {"type": "profile", "profile": "same profile"},
+        "status": "active|revoked",
+        "capabilities": "non-empty string[]",
+        "persistent": "boolean"
+      },
+      "forbidden": "all forbidden_fields recursively"
+    },
+    "audit_event": {
+      "required": ["contract_version", "event_id", "at", "profile", "type", "actor", "outcome", "metadata"],
+      "types": ["profile.state.loaded", "profile.state.saved", "screen.binding.created", "screen.lease.acquired", "screen.lease.released", "authorization.granted", "authorization.revoked", "message.received", "message.sent", "response.normalized", "voice.transcribed"],
+      "metadata_policy": "operational identifiers only; no text, content, markdown, transcript, audio, payload or body"
+    },
+    "attachment_descriptor": {
+      "required": ["id", "profile", "name", "type", "size", "kind", "source", "status"],
+      "properties": {"storage_key": "optional opaque key matching hermes-bots-console://<profile>/<id>; profile must match exactly and id is [A-Za-z0-9][A-Za-z0-9_.-]{0,159}", "size": "0..26214400 bytes", "ttl_seconds": "temporary storage defaults to 86400", "cleanup": "DELETE by id or POST cleanup"},
+      "forbidden": ["file", "blob", "data_url", "base64"]
+    },
+    "markdown_document": {
+      "required": ["format", "source", "blocks"],
+      "properties": {"format": "gfm-safe", "blocks": "safe AST: heading|paragraph|list|quote|table|code"},
+      "policy": "render AST only; strip HTML and permit only https/mailto links and images"
+    },
+    "voice_descriptor": {
+      "required": ["voice_id", "profile", "mime_type", "duration_ms", "source", "transcript", "storage_key", "status"],
+      "properties": {"mime_type": "audio/mpeg|audio/mp4|audio/ogg|audio/wav|audio/webm", "source": "microphone|remote|upload", "status": "ready"},
+      "forbidden": ["data_url", "base64", "audio_bytes", "blob"]
+    },
+    "multimodal_response": {
+      "required": ["contract_version", "response_id", "profile", "role", "text", "markdown", "attachments", "voice", "created_at"],
+      "properties": {"role": "user|assistant", "attachments": "attachment_descriptor[]", "voice": "voice_descriptor|null", "markdown": "markdown_document"},
+      "forbidden": "all forbidden_fields recursively"
+    },
+    "screen_dry_run": {
+      "required": ["profile", "status", "observe", "rfb"],
+      "properties": {"rfb.protocol": "003.008", "rfb.width": 1440, "rfb.height": 900, "rfb.desktop_name": "hermes:<profile>"}
+    },
+    "group_dry_run": {
+      "required": ["room", "capabilities", "events", "thread_id"],
+      "properties": {"room.room_id": "hermes-bots-dry-run-<profile>", "events[].event_id": "opaque id", "events[].thread_id": "same thread_id", "capabilities.methods": "groups.list|groups.create|groups.log|groups.send|groups.state|groups.stop"}
+    }
+  },
+  "fixtures": {
+    "dry_run": {
+      "profile": "researcher",
+      "browser_profile": "/profiles/researcher/bot-desktop/browser-profile",
+      "desktop_name": "hermes:researcher",
+      "display_socket": "/run/hermes/researcher/display.sock",
+      "gateway_socket": "/run/hermes/researcher/gateway.sock",
+      "lease": {"holder": "agent", "status": "held", "viewer_id": "viewer-researcher"},
+      "authorization": {"service": "gmail", "account": "demo@example.com", "capabilities": ["read"], "persistent": true},
+      "response": {"text": "# Dry run\n\n**Contrato listo**.", "voice_mime_type": "audio/webm", "attachment_type": "text/markdown"},
+      "screen": {"rfb_protocol": "003.008", "width": 1440, "height": 900},
+      "group": {"room_id": "hermes-bots-dry-run-researcher", "thread_id": "thread-hermes-bots-dry-run-researcher", "methods": ["groups.list", "groups.create", "groups.log", "groups.send", "groups.state", "groups.stop"]},
+      "browser_flow": {"site": "example.com", "accounts": ["demo@example.com", "reviewer@example.com"], "selected_account": "demo@example.com", "modes": ["planning", "simulation", "autonomous"], "external_effects": false}
+    }
+  }
+}

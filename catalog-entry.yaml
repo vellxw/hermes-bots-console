@@ -1,0 +1,27 @@
+schema_version: 1
+name: hermes-bots-console
+label: Hermes Bot Command
+version: 0.5.0-rc.1
+source:
+  type: git
+  url: https://github.com/OWNER/hermes-bots-console
+  ref: v0.5.0-rc.1
+  sha256_asset: e55c87e1b3014a7ef4bfd9d91780abb8e5b610662b98f64c30499c61ac758390
+requires_hermes: ">=0.21.6"
+platforms:
+  client: [linux, macos, windows]
+  gateway: [linux, macos, windows]
+capabilities:
+  - dashboard_roster
+  - bot_chat
+  - native_groups
+  - profile_scoped_turbo
+  - attachments_and_voice_adapters
+  - isolated_desktop_viewer_linux_gateway_only
+known_issues:
+  - The isolated desktop viewer requires a Linux gateway with Hermes Bot Desktop dependencies.
+  - Client OS support is separate from gateway OS support; Windows and macOS clients can use a remote Linux gateway.
+  - The repository and catalog URL are placeholders until the maintainer authorizes a public destination.
+integrity:
+  manifest: dashboard/manifest.json
+  entry_sri: sha384-T4u411/6/6y+7cXAbTRnmdlXm8FuE6zVAQskHVucQy1/oM3f6cO28pg0tBSSo6P7

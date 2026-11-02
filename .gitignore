@@ -1,0 +1,34 @@
+# Private local history and operator reports
+**/backups/
+reports/
+docs/architect-flow.md
+
+# Python and Node build/test outputs
+**/__pycache__/
+.pytest_cache/
+*.pyc
+node_modules/
+dist/
+coverage/
+
+# Runtime state: never commit mutable profile data
+/groups.json
+/turbo.json
+/attachments/
+/voice/
+*.log
+.env
+.env.*
+
+# Local captures and authenticated/manual smoke probes
+/tests/fixtures/
+tests/*_smoke.py
+tests/screen-*.py
+tests/display_bridge_raw_smoke.py
+tests/screen_bridge_live.py
+*.png
+*.gif
+
+# Local release archives and snapshots
+*.tar.gz
+*.zip

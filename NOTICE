@@ -1,0 +1,8 @@
+Hermes Bot Command is distributed under the MIT License in LICENSE.
+
+Third-party code
+
+- noVNC is vendored under dashboard/novnc. Its source headers identify the Mozilla Public License 2.0. The complete text is retained in dashboard/novnc/LICENSE.txt.
+- pako is vendored under dashboard/novnc/vendor/pako and remains under its original MIT License in dashboard/novnc/vendor/pako/LICENSE.
+
+Third-party notices and source headers remain authoritative for those components. This project does not relicense them as Hermes Bot Command code.

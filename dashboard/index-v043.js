@@ -1,0 +1,866 @@
+(function () {
+  "use strict";
+
+  const PLUGIN = "hermes-bots-console";
+  const SDK = window.__HERMES_PLUGIN_SDK__;
+  if (!SDK || !window.__HERMES_PLUGINS__) return;
+  const React = SDK.React;
+  const h = React.createElement;
+  const { useCallback, useEffect, useMemo, useRef, useState } = SDK.hooks;
+  const { api, fetchJSON, buildWsUrl } = SDK;
+  const BASE = window.__HERMES_BASE_PATH__ || "";
+  const ASSET = `${window.location.origin}${BASE}/dashboard-plugins/${PLUGIN}`;
+  const CURRENT_RELEASE = "0.4.0";
+  const CURRENT_ENTRY = "index-v043.js";
+  const CURRENT_CSS = "style-v041.css";
+  const INTERACTION_CORE = "interaction-core-v001.mjs";
+  const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+  const TURBO_MODES = ["planning", "simulation", "autonomous"];
+  const TURBO_LABELS = { planning: "Planificación Turbo", simulation: "Simulación Turbo", autonomous: "Turbo Autónomo" };
+  const turboModeAllows = (mode, capability) => mode === "autonomous" || capability !== "write" && !(mode === "planning" && ["prepare", "confirm"].includes(capability));
+  const redactedAccount = (value) => String(value || "").replace(/(password|token|secret|api[_-]?key|code|cookie)=?[^\s,;]+/gi, "$1=[REDACTED]").slice(0, 160);
+  const attachmentKind = (type) => type.startsWith("image/") ? "image" : type.startsWith("audio/") ? "audio" : type.startsWith("video/") ? "video" : "document";
+  function normalizeBrowserAttachment(file, source = "file") {
+    const name = String(file?.name || "captura").trim(); const type = String(file?.type || "application/octet-stream").toLowerCase().split(";")[0]; const size = Number(file?.size || 0);
+    if (!name || name.includes("/") || name.includes("\\\\") || /[\\u0000-\\u001f]/.test(name)) throw new Error("Nombre de archivo inválido.");
+    if (!Number.isFinite(size) || size > MAX_ATTACHMENT_BYTES) throw new Error("El adjunto supera el límite de 25 MB.");
+    if (!(type.startsWith("image/") || type.startsWith("audio/") || type.startsWith("video/") || ["application/pdf", "text/plain", "text/markdown", "text/csv", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/octet-stream"].includes(type))) throw new Error("Tipo MIME no permitido.");
+    const id = `attachment-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    return { id, name: name.slice(0, 240), type, size, kind: attachmentKind(type), source, file, preview: type.startsWith("image/") && typeof URL !== "undefined" ? URL.createObjectURL(file) : "", status: "ready" };
+  }
+  const attachmentPayload = (items) => (Array.isArray(items) ? items : []).map((item) => ({ id: item.id, name: item.name, type: item.type, size: item.size, kind: item.kind, source: item.source, ...(item.storage_key ? { storage_key: item.storage_key } : {}) }));
+  const persistTurboState = (profile, state) => { try { localStorage.setItem(`hermes-bots-console.turbo.${profile}`, JSON.stringify({ profile, mode: state.mode, grants: state.grants || [], updatedAt: Date.now() })); } catch (_) {} };
+  const loadTurboState = (profile) => { try { const value = JSON.parse(localStorage.getItem(`hermes-bots-console.turbo.${profile}`) || "null"); if (value?.profile === profile && TURBO_MODES.includes(value.mode)) return value; } catch (_) {} return { profile, mode: "planning", grants: [], updatedAt: 0 }; };
+
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const errText = (error) => String(error && error.message ? error.message : error);
+  function screenRequest(rpc, method, params, timeout = 12000) {
+    return new Promise((resolve, reject) => {
+      let expired = false;
+      const timer = window.setTimeout(() => {
+        expired = true;
+        // A timed-out RPC remains in the Gateway's request queue unless its transport is
+        // closed. Reusing that socket makes a slow display.start hold every later observe.
+        try { rpc.close(); } catch (_) {}
+        reject(new Error("El Gateway tardó demasiado en responder. Pulsá Reconectar."));
+      }, timeout);
+      rpc.request(method, params).then((value) => {
+        if (expired) return;
+        window.clearTimeout(timer);
+        resolve(value);
+      }).catch((error) => {
+        if (expired) return;
+        window.clearTimeout(timer);
+        reject(error);
+      });
+    });
+  }
+  function importWithTimeout(loader, timeout = 15000) {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const timer = window.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error("noVNC tardó demasiado en cargar. Pulsá Reconectar."));
+      }, timeout);
+      loader().then((value) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        resolve(value);
+      }).catch((error) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        reject(error);
+      });
+    });
+  }
+  const button = (label, onClick, cls, disabled) => h("button", { className: `hb-btn ${cls || ""}`, onClick, disabled, type: "button" }, label);
+  const iconButton = (label, icon, onClick, cls, disabled) => h("button", { className: `hb-btn icon hb-icon-button ${cls || ""}`, onClick, disabled, type: "button", title: label, "aria-label": label }, icon);
+  const monitorIcon = () => h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false" }, h("rect", { x: "3", y: "4", width: "18", height: "12", rx: "1.8" }), h("path", { d: "M8 20h8M12 16v4" }));
+  const microphoneIcon = () => h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false" }, h("rect", { x: "8", y: "3", width: "8", height: "12", rx: "4" }), h("path", { d: "M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6" }));
+  const stopIcon = () => h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false" }, h("rect", { x: "6", y: "6", width: "12", height: "12", rx: "2" }));
+  const bellIcon = () => h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false" }, h("path", { d: "M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" }));
+  const closeIcon = () => h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false" }, h("path", { d: "M6 6l12 12M18 6L6 18" }));
+  const refreshIcon = () => h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false" }, h("path", { d: "M20 11a8 8 0 1 0 1 5M20 5v6h-6" }));
+  const fullscreenIcon = () => h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false" }, h("path", { d: "M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" }));
+  const arrowLeftIcon = () => h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false" }, h("path", { d: "M14 5l-7 7 7 7" }));
+  const arrowRightIcon = () => h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false" }, h("path", { d: "M10 5l7 7-7 7" }));
+  const keyboardIcon = () => h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false" }, h("rect", { x: "3", y: "6", width: "18", height: "12", rx: "2" }), h("path", { d: "M6 10h1M9 10h1M12 10h1M15 10h1M6 14h8" }));
+  const copyIcon = () => h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false" }, h("rect", { x: "8", y: "8", width: "11", height: "12", rx: "2" }), h("path", { d: "M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h2" }));
+  const clipboardIcon = () => h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false" }, h("rect", { x: "6", y: "5", width: "12", height: "16", rx: "2" }), h("path", { d: "M9 5V3h6v2M9 10h6M9 14h6" }));
+  const profileLabel = (bot) => bot.display_name || bot.bot_title || bot.name;
+  const profileInitial = (bot) => profileLabel(bot).trim().slice(0, 1).toUpperCase() || "B";
+  const avatarTone = (name) => {
+    let n = 0;
+    for (const ch of String(name || "bot")) n = (n * 31 + ch.charCodeAt(0)) % 360;
+    return { background: `linear-gradient(135deg, hsl(${n} 72% 52%), hsl(${(n + 48) % 360} 72% 42%))` };
+  };
+  const characterProfile = (name) => {
+    let seed = 2166136261;
+    for (const ch of String(name || "bot")) { seed ^= ch.charCodeAt(0); seed = Math.imul(seed, 16777619); }
+    seed >>>= 0;
+    const hue = seed % 360;
+    const shapes = ["round", "organic", "boxy", "capsule", "nub", "cloud", "sun", "triangle"];
+    return { hue, shape: shapes[seed % shapes.length], flip: ((seed >>> 8) % 2) ? -1 : 1, eyeGap: 7 + (seed % 3) };
+  };
+  function BotCharacter({ bot, size = "normal", working = false }) {
+    const name = profileLabel(bot);
+    const profile = characterProfile(bot.name || name);
+    const dark = profile.hue > 205 && profile.hue < 285;
+    const ink = dark ? "#fff" : "#17202a";
+    const pupil = dark ? "#17202a" : "#fff";
+    const body = `hsl(${profile.hue} 68% 58%)`;
+    const shade = `hsl(${(profile.hue + 28) % 360} 70% 44%)`;
+    const eyeX = profile.flip < 0 ? 33 : 27;
+    const eyes = h("g", { className: "hb-character-eyes", fill: ink }, h("ellipse", { cx: eyeX, cy: "31", rx: "3.6", ry: "4.4" }), h("ellipse", { cx: eyeX + profile.eyeGap, cy: "31", rx: "3.6", ry: "4.4" }), h("circle", { cx: eyeX + 1, cy: "31", r: "1.5", fill: pupil }), h("circle", { cx: eyeX + profile.eyeGap + 1, cy: "31", r: "1.5", fill: pupil }));
+    const mouth = h("path", { d: "M27 42 Q32 46 37 42", fill: "none", stroke: ink, strokeLinecap: "round", strokeWidth: "1.8" });
+    const bodyShape = profile.shape === "round" ? h("circle", { cx: "32", cy: "32", r: "22", fill: body })
+      : profile.shape === "organic" ? h("path", { d: "M13 43C7 32 12 15 25 11c10-3 26 2 29 14 3 12-5 25-17 28-12 3-20-1-24-10Z", fill: body })
+      : profile.shape === "boxy" ? h("rect", { x: "10", y: "10", width: "44", height: "44", rx: "13", fill: body })
+      : profile.shape === "capsule" ? h("rect", { x: "8", y: "18", width: "48", height: "29", rx: "15", fill: body })
+      : profile.shape === "nub" ? h("path", { d: "M14 45C9 35 13 21 24 18c3-8 15-8 18 0 11 3 15 17 10 27-5 10-33 10-38 0Z", fill: body })
+      : profile.shape === "cloud" ? h("path", { d: "M13 49a12 12 0 0 1 1-23 17 17 0 0 1 32-5 12 12 0 0 1 1 28Z", fill: body })
+      : profile.shape === "sun" ? h("g", null, h("path", { d: "M32 4l4 7 8-4-1 8 8 1-6 6 6 6-8 1 1 8-8-4-4 7-4-7-8 4 1-8-8-1 6-6-6-6 8-1-1-8 8 4Z", fill: shade }), h("circle", { cx: "32", cy: "32", r: "18", fill: body }))
+      : h("path", { d: "M32 7 55 53H9Z", fill: body });
+    return h("div", { className: `hb-character hb-character-${size} ${working ? "is-working" : ""}`, role: "img", "aria-label": `Personaje de ${name}`, title: name }, h("svg", { viewBox: "0 0 64 64", "aria-hidden": "true", focusable: "false" }, h("g", { className: "hb-character-body" }, bodyShape, h("path", { d: "M17 51 Q32 59 47 51", fill: "none", opacity: ".24", stroke: shade, strokeLinecap: "round", strokeWidth: "2" }), eyes, mouth)), working ? h("span", { className: "hb-character-dots", "aria-hidden": "true" }, "•••") : null);
+  }
+  const SECURE_REQUEST_METHODS = new Set(["secret", "sudo", "vault.code", "vault.save_login", "vault.unlock_prompt"]);
+  const routeFromLocation = () => {
+    const q = new URLSearchParams(window.location.search);
+    return { view: q.get("view") === "chat" ? "chat" : q.get("view") === "groups" ? "groups" : q.get("view") === "group" ? "group" : "roster", profile: q.get("profile") || "", session: q.get("session") || "", group: q.get("group") || "" };
+  };
+  const navigate = (route, replace = false) => {
+    const q = new URLSearchParams();
+    if (route.view && route.view !== "roster") q.set("view", route.view);
+    if (route.profile) q.set("profile", route.profile);
+    if (route.session) q.set("session", route.session);
+    if (route.group) q.set("group", route.group);
+    const next = `${BASE}/bots${q.toString() ? `?${q}` : ""}`;
+    if (replace) window.history.replaceState({}, "", next);
+    else window.history.pushState({}, "", next);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+
+  class RpcClient {
+    constructor(profile = "") { this.profile = profile; this.ws = null; this.nextId = 1; this.pending = new Map(); this.listeners = new Map(); this.capabilitiesSent = false; }
+    on(name, fn) {
+      if (!this.listeners.has(name)) this.listeners.set(name, new Set());
+      this.listeners.get(name).add(fn);
+      return () => this.listeners.get(name)?.delete(fn);
+    }
+    emit(name, value) { for (const fn of this.listeners.get(name) || []) { try { fn(value); } catch (_) {} } }
+    async connect() {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
+      const url = await buildWsUrl("/api/ws", this.profile ? { profile: this.profile } : undefined);
+      await new Promise((resolve, reject) => {
+        const ws = new WebSocket(url);
+        let settled = false;
+        this.ws = ws;
+        ws.onopen = () => { settled = true; this.emit("open"); resolve(); };
+        ws.onerror = () => { if (!settled) reject(new Error("No se pudo abrir el Gateway WebSocket")); };
+        ws.onclose = () => {
+          for (const item of this.pending.values()) item.reject(new Error("Gateway WebSocket cerrado"));
+          this.pending.clear();
+          this.ws = null;
+          this.emit("close");
+        };
+        ws.onmessage = (event) => {
+          let frame;
+          try { frame = JSON.parse(String(event.data)); } catch (_) { return; }
+          if (frame && frame.id != null && frame.method && !this.pending.has(String(frame.id))) {
+            this.emit("server-request", frame);
+            return;
+          }
+          if (frame && frame.id != null && this.pending.has(String(frame.id))) {
+            const item = this.pending.get(String(frame.id));
+            this.pending.delete(String(frame.id));
+            if (frame.error) item.reject(new Error(frame.error.message || "Gateway RPC error"));
+            else item.resolve(frame.result || {});
+            return;
+          }
+          if (frame && frame.method === "event") {
+            const params = frame.params || {};
+            this.emit("event", params);
+            if (params.type === "gateway.ready" && !this.capabilitiesSent) { this.capabilitiesSent = true; this.request("client.capabilities", { server_requests: true }).catch(() => {}); }
+            return;
+          }
+          if (frame && frame.type) this.emit("event", frame);
+        };
+      });
+    }
+    async request(method, params) {
+      await this.connect();
+      const id = String(this.nextId++);
+      return new Promise((resolve, reject) => {
+        this.pending.set(id, { resolve, reject });
+        try { this.ws.send(JSON.stringify({ jsonrpc: "2.0", id, method, params: params || {} })); }
+        catch (error) { this.pending.delete(id); reject(error); }
+      });
+    }
+    respond(id, result) {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+      this.ws.send(JSON.stringify({ jsonrpc: "2.0", id, result }));
+      return true;
+    }
+    close() {
+      const error = new Error("Gateway WebSocket cerrado");
+      for (const item of this.pending.values()) item.reject(error);
+      this.pending.clear();
+      if (this.ws) this.ws.close();
+      this.ws = null;
+    }
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error("No se pudo leer la grabación"));
+      reader.readAsDataURL(blob);
+    });
+  }
+  function safeMessageText(message) {
+    if (message == null) return "";
+    if (typeof message === "string") return message;
+    if (Array.isArray(message)) return message.map(safeMessageText).join("\n");
+    if (typeof message === "object") return String(message.text || message.content || message.display_content || "");
+    return String(message);
+  }
+  function safeMarkdownUrl(value) {
+    const url = String(value || "").trim();
+    return /^(?:https?:|mailto:)/i.test(url) ? url : "";
+  }
+  function inlineMarkdown(text, prefix = "inline") {
+    const source = String(text || "").replace(/<[^>]*>/g, "");
+    const children = []; let rest = source; let index = 0;
+    while (rest) {
+      const match = rest.match(/^(?:!\[([^\]]*)\]\(([^\s)]+)(?:\s+"[^"]*")?\)|\[([^\]]+)\]\(([^\s)]+)(?:\s+"[^"]*")?\)|\*\*([^*]+)\*\*|__([^_]+)__|`([^`]+)`|\*([^*]+)\*|_([^_]+)_)/);
+      if (!match) { children.push(rest); break; }
+      if (match[1] !== undefined) { const url = safeMarkdownUrl(match[2]); children.push(url ? h("img", { key: `${prefix}-${index++}`, src: url, alt: match[1], loading: "lazy" }) : match[1]); }
+      else if (match[3] !== undefined) { const url = safeMarkdownUrl(match[4]); children.push(url ? h("a", { key: `${prefix}-${index++}`, href: url, target: "_blank", rel: "noopener noreferrer" }, match[3]) : match[3]); }
+      else if (match[5] !== undefined || match[6] !== undefined) children.push(h("strong", { key: `${prefix}-${index++}` }, inlineMarkdown(match[5] || match[6], `${prefix}-strong`)));
+      else if (match[7] !== undefined) children.push(h("code", { key: `${prefix}-${index++}` }, match[7]));
+      else children.push(h("em", { key: `${prefix}-${index++}` }, match[8] || match[9]));
+      rest = rest.slice(match[0].length);
+    }
+    return children;
+  }
+  function renderMarkdown(text) {
+    const source = safeMessageText(text).replace(/\r\n?/g, "\n").replace(/<[^>]*>/g, "");
+    const lines = source.split("\n"); const blocks = []; let index = 0; let blockId = 0;
+    while (index < lines.length) {
+      if (!lines[index].trim()) { index += 1; continue; }
+      const fence = lines[index].match(/^\s*```\s*([\w-]*)\s*$/);
+      if (fence) { const code = []; index += 1; while (index < lines.length && !/^\s*```\s*$/.test(lines[index])) code.push(lines[index++]); if (index < lines.length) index += 1; blocks.push(h("details", { className: "hb-code", key: `code-${blockId++}` }, h("summary", null, fence[1] ? `Código · ${fence[1]}` : "Código"), h("pre", null, code.join("\n")))); continue; }
+      const heading = lines[index].match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
+      if (heading) { const level = heading[1].length; blocks.push(h(`h${level}`, { key: `heading-${blockId++}` }, inlineMarkdown(heading[2]))); index += 1; continue; }
+      if (/^\s*(?:[-*+]\s+|\d+[.)]\s+)/.test(lines[index])) {
+        const ordered = /^\s*\d+[.)]\s+/.test(lines[index]); const items = []; while (index < lines.length && /^\s*(?:[-*+]\s+|\d+[.)]\s+)/.test(lines[index])) { items.push(h("li", { key: `item-${blockId}-${items.length}` }, inlineMarkdown(lines[index].replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+)/, "")))); index += 1; } blocks.push(h(ordered ? "ol" : "ul", { key: `list-${blockId++}` }, items)); continue;
+      }
+      if (/^\s*>/.test(lines[index])) { const quote = []; while (index < lines.length && /^\s*>/.test(lines[index])) { quote.push(lines[index].replace(/^\s*>\s?/, "")); index += 1; } blocks.push(h("blockquote", { key: `quote-${blockId++}` }, inlineMarkdown(quote.join("\n")))); continue; }
+      if (lines[index].includes("|") && lines[index + 1]?.includes("---")) { const cells = (line) => line.split("|").map((value) => value.trim()).filter(Boolean); const headers = cells(lines[index]); const rows = []; index += 2; while (index < lines.length && lines[index].includes("|") && lines[index].trim()) { rows.push(cells(lines[index++])); } blocks.push(h("table", { className: "hb-markdown-table", key: `table-${blockId++}` }, h("thead", null, h("tr", null, headers.map((cell, cellIndex) => h("th", { key: `th-${cellIndex}` }, inlineMarkdown(cell))))), h("tbody", null, rows.map((row, rowIndex) => h("tr", { key: `tr-${rowIndex}` }, row.map((cell, cellIndex) => h("td", { key: `td-${rowIndex}-${cellIndex}` }, inlineMarkdown(cell)))))))); continue; }
+      const paragraph = [lines[index++]]; while (index < lines.length && lines[index].trim() && !/^\s*(?:#{1,6}\s|```|[-*+]\s+|\d+[.)]\s+|>)/.test(lines[index])) paragraph.push(lines[index++]); blocks.push(h("p", { key: `p-${blockId++}` }, paragraph.map((line, lineIndex) => h(React.Fragment, { key: `${blockId}-${lineIndex}` }, lineIndex ? h("br") : null, inlineMarkdown(line, `p-${blockId}-${lineIndex}`)))));
+    }
+    return blocks;
+  }
+  function WorkingIndicator({ text, recoverable, stalled, onContinue, continuing }) {
+    const interrupted = Boolean(recoverable || stalled);
+    const label = interrupted ? (stalled ? 'Parece detenido.' : 'El trabajo se detuvo.') : 'Hermes decide automáticamente el orden de cada mensaje.';
+    return h("div", { className: `hb-working ${interrupted ? "hb-working-recovery" : ""}`, role: "status", "aria-live": "polite" }, interrupted ? h("span", { className: "hb-recovery-dot", "aria-hidden": "true" }, "!") : h("span", { className: "hb-working-spinner", "aria-hidden": "true" }), h("span", { className: "hb-working-copy" }, h("span", null, interrupted ? "Necesita continuar" : text || "Pensando…"), h("small", null, label)), interrupted ? button(continuing ? "Reanudando…" : "Continuar", onContinue, "hb-continue-button", continuing) : null);
+  }
+  function MessageBubble({ message }) {
+    if (message.role === "tool") return h("div", { className: "hb-tool" }, h("span", { className: "hb-tool-dot" }, "•"), h("span", null, "Trabajando…"));
+    if (message.role !== "user" && !message.text?.trim() && !message.streaming) return null;
+    const attachmentView = Array.isArray(message.attachments) && message.attachments.length ? h("div", { className: "hb-message-attachments" }, message.attachments.map((attachment) => h("span", { className: "hb-message-attachment", key: attachment.id || attachment.name }, `${attachment.kind || "archivo"} · ${attachment.name}`))) : null;
+    return h("div", { className: `hb-message ${message.role === "user" ? "user" : "assistant"}` }, h("div", { className: "hb-message-label" }, message.role === "user" ? "Tú" : "Hermes"), h("div", { className: "hb-message-body" }, renderMarkdown(message.text), attachmentView), message.streaming ? h("span", { className: "hb-cursor", "aria-label": "respondiendo" }, "▋") : null);
+  }
+
+  async function waitForScreenReady(rpc, profile, timeout = 15000) {
+    const deadline = Date.now() + timeout;
+    let lastError = null;
+    while (Date.now() < deadline) {
+      try {
+        const status = await screenRequest(rpc, "display.status", { profile }, 5000);
+        if (status?.running) return status;
+      } catch (error) {
+        lastError = error;
+      }
+      await sleep(350);
+    }
+    throw new Error(lastError ? `Bot Screen no respondió: ${errText(lastError)}` : "Bot Screen no inició a tiempo. Pulsá Reconectar.");
+  }
+
+  function ScreenPanel({ bot, onClose }) {
+    const hostRef = useRef(null); const frameRef = useRef(null); const panelRef = useRef(null); const rpcRef = useRef(null); const rfbRef = useRef(null); const wsRef = useRef(null); const viewerRef = useRef(""); const reconnectTimerRef = useRef(null); const keyboardRef = useRef(null); const clipboardListenerRef = useRef(null); const tapTimerRef = useRef(null); const keyboardLockRef = useRef(null); const visualViewportCleanupRef = useRef(null); const modifierKeysRef = useRef(new Set()); const remoteRecorderRef = useRef(null); const remoteAudioChunksRef = useRef([]); const mobileModeRef = useRef(typeof window !== "undefined" && window.matchMedia?.("(max-width: 700px)").matches);
+    const pointersRef = useRef(new Map()); const gestureRef = useRef({ mode: "none", moved: false, startX: 0, startY: 0, lastX: 0, lastY: 0, centerX: 0, centerY: 0, pinchDistance: 0, pinchZoom: 1, longPress: false, longPressTimer: null }); const zoomRef = useRef(1); const panRef = useRef({ x: 0, y: 0 }); const humanRef = useRef(false); const remoteMouseRef = useRef({ down: false, button: 0 });
+    const [status, setStatus] = useState(null); const [connection, setConnection] = useState("idle"); const [human, setHuman] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [zoom, setZoom] = useState(1); const [pan, setPan] = useState({ x: 0, y: 0 }); const [remoteClipboard, setRemoteClipboard] = useState(""); const [keyboardOpen, setKeyboardOpen] = useState(false); const [remoteVoiceState, setRemoteVoiceState] = useState("idle"); const [mobileMode, setMobileMode] = useState(() => mobileModeRef.current); const [fullscreen, setFullscreen] = useState(false);
+    const getRpc = useCallback(() => { if (!rpcRef.current) rpcRef.current = new RpcClient(bot.name); return rpcRef.current; }, [bot.name]);
+    const setHumanLease = useCallback((value) => { humanRef.current = value; setHuman(value); }, []);
+    useEffect(() => {
+      const media = window.matchMedia?.("(max-width: 700px)"); if (!media) return undefined;
+      const update = () => { const isMobile = media.matches; mobileModeRef.current = isMobile; setMobileMode(isMobile); if (rfbRef.current) { rfbRef.current.focusOnClick = !isMobile; rfbRef.current.hideCursor = isMobile; } };
+      update(); media.addEventListener?.("change", update); return () => media.removeEventListener?.("change", update);
+    }, []);
+    useEffect(() => { const update = () => setFullscreen(document.fullscreenElement === panelRef.current); document.addEventListener("fullscreenchange", update); return () => document.removeEventListener("fullscreenchange", update); }, []);
+    const toggleFullscreen = useCallback(async () => { try { if (document.fullscreenElement) { await document.exitFullscreen?.(); return; } const panel = panelRef.current; if (!panel?.requestFullscreen) throw new Error("fullscreen-unavailable"); await panel.requestFullscreen(); } catch (e) { setError("El navegador no permite pantalla completa en este momento."); } }, []);
+    const clampPan = useCallback((value, nextZoom) => {
+      const frame = frameRef.current; const canvas = hostRef.current?.querySelector("canvas"); if (!frame) return value;
+      const currentZoom = zoomRef.current; const rect = canvas?.getBoundingClientRect(); const baseWidth = canvas?.offsetWidth || (rect?.width ? rect.width / currentZoom : frame.clientWidth); const baseHeight = canvas?.offsetHeight || (rect?.height ? rect.height / currentZoom : frame.clientHeight);
+      const maxX = Math.max(0, (baseWidth * nextZoom - frame.clientWidth) / 2); const maxY = Math.max(0, (baseHeight * nextZoom - frame.clientHeight) / 2);
+      return { x: Math.max(-maxX, Math.min(maxX, value.x)), y: Math.max(-maxY, Math.min(maxY, value.y)) };
+    }, []);
+    const resetViewport = useCallback(() => { zoomRef.current = 1; panRef.current = { x: 0, y: 0 }; setZoom(1); setPan({ x: 0, y: 0 }); }, []);
+    const setViewportZoom = useCallback((requested, clientX, clientY, extraPan = { x: 0, y: 0 }) => {
+      const frame = frameRef.current; const previous = zoomRef.current; const next = Math.max(1, Math.min(4, requested));
+      if (!frame) return;
+      const rect = frame.getBoundingClientRect(); const originX = rect.width / 2; const originY = rect.height / 2;
+      const pointerX = Number.isFinite(clientX) ? clientX - rect.left - originX : 0; const pointerY = Number.isFinite(clientY) ? clientY - rect.top - originY : 0;
+      const current = panRef.current; const nextPan = clampPan({ x: pointerX - (pointerX - current.x) * next / previous + extraPan.x, y: pointerY - (pointerY - current.y) * next / previous + extraPan.y }, next);
+      zoomRef.current = next; panRef.current = nextPan; setZoom(next); setPan(nextPan);
+    }, [clampPan]);
+    const canvasClientPoint = useCallback((clientX, clientY) => {
+      const canvas = hostRef.current?.querySelector("canvas"); if (!canvas) return null;
+      const currentZoom = zoomRef.current; const transformed = canvas.getBoundingClientRect();
+      if (clientX < transformed.left || clientX > transformed.right || clientY < transformed.top || clientY > transformed.bottom) return null;
+      return { clientX: transformed.left + (clientX - transformed.left) / currentZoom, clientY: transformed.top + (clientY - transformed.top) / currentZoom };
+    }, []);
+    const dispatchRemoteMouse = useCallback((type, clientX, clientY, buttons = 0, button = 0) => {
+      const canvas = hostRef.current?.querySelector("canvas"); const point = canvasClientPoint(clientX, clientY); if (!canvas || !point || !humanRef.current) return false;
+      canvas.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: point.clientX, clientY: point.clientY, buttons, button })); return true;
+    }, [canvasClientPoint]);
+    const remoteMouseDown = useCallback((clientX, clientY, button = 0) => { const buttons = button === 2 ? 2 : 1; if (dispatchRemoteMouse("mousedown", clientX, clientY, buttons, button)) { remoteMouseRef.current = { down: true, button }; } }, [dispatchRemoteMouse]);
+    const remoteMouseUp = useCallback((clientX, clientY) => { if (!remoteMouseRef.current.down) return; dispatchRemoteMouse("mouseup", clientX, clientY, 0, remoteMouseRef.current.button); remoteMouseRef.current = { down: false, button: 0 }; }, [dispatchRemoteMouse]);
+    const remoteMouseMove = useCallback((clientX, clientY) => { dispatchRemoteMouse("mousemove", clientX, clientY, remoteMouseRef.current.down ? 1 : 0, remoteMouseRef.current.button); }, [dispatchRemoteMouse]);
+    const acquireLease = useCallback(async () => {
+      if (!viewerRef.current || humanRef.current) return humanRef.current;
+      try { const r = await screenRequest(getRpc(), "display.lease.acquire", { profile: bot.name, viewer_id: viewerRef.current, reason: "mobile-console" }); setHumanLease(true); setStatus((s) => ({ ...(s || {}), lease: r.lease })); if (rfbRef.current) rfbRef.current.viewOnly = false; return true; }
+      catch (e) { setError(errText(e)); return false; }
+    }, [bot.name, getRpc, setHumanLease]);
+    const cleanup = useCallback(() => {
+      try { if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current); } catch (_) {}
+      try { if (tapTimerRef.current) window.clearTimeout(tapTimerRef.current); } catch (_) {}
+      try { if (gestureRef.current.longPressTimer) window.clearTimeout(gestureRef.current.longPressTimer); } catch (_) {}
+      try { if (remoteRecorderRef.current && remoteRecorderRef.current.state === "recording") remoteRecorderRef.current.stop(); } catch (_) {}
+      remoteRecorderRef.current = null; remoteAudioChunksRef.current = []; setRemoteVoiceState("idle");
+      remoteMouseRef.current = { down: false, button: 0 };
+      visualViewportCleanupRef.current?.(); visualViewportCleanupRef.current = null;
+      const lock = keyboardLockRef.current; if (lock) { const body = document.body; const root = document.documentElement; body.style.position = lock.body.position; body.style.top = lock.body.top; body.style.width = lock.body.width; body.style.overflow = lock.body.overflow; root.style.overscrollBehavior = lock.rootOverscroll; window.scrollTo(0, lock.scrollY); keyboardLockRef.current = null; }
+      setKeyboardOpen(false);
+      try { if (rfbRef.current && clipboardListenerRef.current) rfbRef.current.removeEventListener("clipboard", clipboardListenerRef.current); } catch (_) {}
+      try { rfbRef.current?.disconnect(); } catch (_) {} try { wsRef.current?.close(); } catch (_) {}
+      rfbRef.current = null; wsRef.current = null; clipboardListenerRef.current = null; pointersRef.current.clear(); setHumanLease(false); setConnection("idle"); resetViewport();
+      if (hostRef.current) hostRef.current.replaceChildren();
+    }, [resetViewport, setHumanLease]);
+    const refresh = useCallback(async () => { try { setStatus(await getRpc().request("display.status", { profile: bot.name })); setError(""); } catch (e) { setError(errText(e)); } }, [bot.name, getRpc]);
+    const dispatchTap = useCallback((clientX, clientY) => { remoteMouseDown(clientX, clientY, 0); remoteMouseUp(clientX, clientY); }, [remoteMouseDown, remoteMouseUp]);
+    const cancelTap = useCallback(() => { if (tapTimerRef.current) { window.clearTimeout(tapTimerRef.current); tapTimerRef.current = null; } }, []);
+    const scheduleTap = useCallback((clientX, clientY) => { cancelTap(); tapTimerRef.current = window.setTimeout(() => { tapTimerRef.current = null; dispatchTap(clientX, clientY); }, 320); }, [cancelTap, dispatchTap]);
+    const beginTwoFingerCamera = useCallback(() => {
+      const points = [...pointersRef.current.values()]; if (points.length < 2) return;
+      cancelTap(); if (gestureRef.current.longPressTimer) window.clearTimeout(gestureRef.current.longPressTimer); if (remoteMouseRef.current.down) remoteMouseUp(points[0].x, points[0].y);
+      const centerX = (points[0].x + points[1].x) / 2; const centerY = (points[0].y + points[1].y) / 2;
+      gestureRef.current.mode = "twoFingerPan"; gestureRef.current.moved = true; gestureRef.current.centerX = centerX; gestureRef.current.centerY = centerY; gestureRef.current.pinchDistance = Math.max(1, Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y)); gestureRef.current.pinchZoom = zoomRef.current;
+    }, [cancelTap, remoteMouseUp]);
+    const handlePointerDown = useCallback((event) => {
+      if (event.pointerType === "mouse" && event.button !== 0) return; event.preventDefault(); event.currentTarget.setPointerCapture?.(event.pointerId); pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (pointersRef.current.size === 1) {
+        gestureRef.current = { mode: "remoteMouse", moved: false, startX: event.clientX, startY: event.clientY, lastX: event.clientX, lastY: event.clientY, centerX: event.clientX, centerY: event.clientY, pinchDistance: 0, pinchZoom: zoomRef.current, longPress: false, longPressTimer: window.setTimeout(() => { gestureRef.current.longPress = true; }, 650) };
+      } else if (pointersRef.current.size === 2) beginTwoFingerCamera();
+    }, [beginTwoFingerCamera]);
+    const handlePointerMove = useCallback((event) => {
+      if (!pointersRef.current.has(event.pointerId)) return; event.preventDefault(); pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY }); const points = [...pointersRef.current.values()];
+      if (points.length >= 2) {
+        if (gestureRef.current.mode !== "twoFingerPan") beginTwoFingerCamera();
+        const centerX = (points[0].x + points[1].x) / 2; const centerY = (points[0].y + points[1].y) / 2; const distance = Math.max(1, Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y));
+        const deltaX = centerX - gestureRef.current.centerX; const deltaY = centerY - gestureRef.current.centerY; const pinch = gestureRef.current.pinchZoom * distance / gestureRef.current.pinchDistance;
+        setViewportZoom(pinch, centerX, centerY, { x: deltaX, y: deltaY }); gestureRef.current.centerX = centerX; gestureRef.current.centerY = centerY; return;
+      }
+      if (points.length !== 1 || gestureRef.current.mode !== "remoteMouse") return;
+      const distance = Math.hypot(event.clientX - gestureRef.current.startX, event.clientY - gestureRef.current.startY);
+      if (distance > 8) { gestureRef.current.moved = true; if (gestureRef.current.longPressTimer) window.clearTimeout(gestureRef.current.longPressTimer); }
+      if (gestureRef.current.longPress && distance > 8 && !remoteMouseRef.current.down) remoteMouseDown(event.clientX, event.clientY, 0);
+      remoteMouseMove(event.clientX, event.clientY);
+    }, [beginTwoFingerCamera, remoteMouseDown, remoteMouseMove, setViewportZoom]);
+    const handlePointerUp = useCallback((event) => {
+      if (!pointersRef.current.has(event.pointerId)) return; event.preventDefault(); const wasSingle = pointersRef.current.size === 1; const gesture = gestureRef.current; pointersRef.current.delete(event.pointerId);
+      if (gesture.longPressTimer) window.clearTimeout(gesture.longPressTimer);
+      if (!wasSingle || gesture.mode === "twoFingerPan") { if (!pointersRef.current.size) gestureRef.current.mode = "none"; return; }
+      if (remoteMouseRef.current.down) remoteMouseUp(event.clientX, event.clientY);
+      if (!gesture.moved) { if (gesture.longPress) { remoteMouseDown(event.clientX, event.clientY, 2); remoteMouseUp(event.clientX, event.clientY); } else if (tapTimerRef.current) { cancelTap(); setViewportZoom(zoomRef.current > 1 ? 1 : 2, event.clientX, event.clientY); } else scheduleTap(event.clientX, event.clientY); }
+      gestureRef.current.mode = "none";
+    }, [cancelTap, dispatchTap, remoteMouseUp, scheduleTap, setViewportZoom]);
+    const sendBrowserKey = useCallback((keysym, code) => { if (!rfbRef.current || !humanRef.current) return; rfbRef.current.sendKey(0xffe9, "AltLeft", true); rfbRef.current.sendKey(keysym, code, true); rfbRef.current.sendKey(keysym, code, false); rfbRef.current.sendKey(0xffe9, "AltLeft", false); }, []);
+    const copyRemote = useCallback(async () => { if (!remoteClipboard) return; try { await navigator.clipboard.writeText(remoteClipboard); } catch (e) { setError(errText(e)); } }, [remoteClipboard]);
+    const pasteLocal = useCallback(async () => { if (!rfbRef.current || !humanRef.current) return; try { rfbRef.current.clipboardPasteFrom(await navigator.clipboard.readText()); } catch (e) { setError(errText(e)); } }, []);
+    const openKeyboard = useCallback(() => {
+      if (!humanRef.current) return;
+      const scrollY = window.scrollY || document.documentElement.scrollTop || 0; const body = document.body; const root = document.documentElement;
+      keyboardLockRef.current = { scrollY, body: { position: body.style.position, top: body.style.top, width: body.style.width, overflow: body.style.overflow }, rootOverscroll: root.style.overscrollBehavior };
+      body.style.position = "fixed"; body.style.top = `-${scrollY}px`; body.style.width = "100%"; body.style.overflow = "hidden"; root.style.overscrollBehavior = "none";
+      const input = keyboardRef.current;
+      if (input) { input.tabIndex = 0; try { input.focus({ preventScroll: true }); } catch (_) { input.focus(); } }
+      const keepViewport = () => window.scrollTo(0, scrollY); window.visualViewport?.addEventListener("resize", keepViewport); window.visualViewport?.addEventListener("scroll", keepViewport); visualViewportCleanupRef.current = () => { window.visualViewport?.removeEventListener("resize", keepViewport); window.visualViewport?.removeEventListener("scroll", keepViewport); };
+      setKeyboardOpen(true); window.setTimeout(() => { if (keyboardRef.current && document.activeElement !== keyboardRef.current) { keyboardRef.current.tabIndex = 0; try { keyboardRef.current.focus({ preventScroll: true }); } catch (_) { keyboardRef.current.focus(); } } }, 80);
+    }, []);
+    const closeKeyboard = useCallback(() => {
+      try { keyboardRef.current?.blur(); } catch (_) {}
+      visualViewportCleanupRef.current?.(); visualViewportCleanupRef.current = null;
+      const lock = keyboardLockRef.current; if (lock) { const body = document.body; const root = document.documentElement; body.style.position = lock.body.position; body.style.top = lock.body.top; body.style.width = lock.body.width; body.style.overflow = lock.body.overflow; root.style.overscrollBehavior = lock.rootOverscroll; window.scrollTo(0, lock.scrollY); keyboardLockRef.current = null; }
+      setKeyboardOpen(false);
+    }, []);
+    const toggleKeyboard = useCallback(() => { if (keyboardOpen) closeKeyboard(); else openKeyboard(); }, [closeKeyboard, keyboardOpen, openKeyboard]);
+    const sendKeyboardText = useCallback((text) => { if (!rfbRef.current || !humanRef.current) return; for (const character of [...text]) rfbRef.current.sendKey(character.codePointAt(0)); }, []);
+    const handleKeyboardInput = useCallback((event) => { const text = event.currentTarget.value; if (text) sendKeyboardText(text); event.currentTarget.value = ""; }, [sendKeyboardText]);
+    const keyboardSpecials = { Backspace: [0xff08, "Backspace"], Enter: [0xff0d, "Enter"], Tab: [0xff09, "Tab"], Escape: [0xff1b, "Escape"], ArrowUp: [0xff52, "ArrowUp"], ArrowDown: [0xff54, "ArrowDown"], ArrowLeft: [0xff51, "ArrowLeft"], ArrowRight: [0xff53, "ArrowRight"], Shift: [0xffe1, "ShiftLeft"], Control: [0xffe3, "ControlLeft"], Alt: [0xffe9, "AltLeft"], Meta: [0xffeb, "MetaLeft"] };
+    const handleKeyboardKey = useCallback((event) => { const entry = keyboardSpecials[event.key]; if (entry && rfbRef.current && humanRef.current) { event.preventDefault(); if (["Shift", "Control", "Alt", "Meta"].includes(event.key)) { modifierKeysRef.current.add(event.key); rfbRef.current.sendKey(entry[0], entry[1], true); } else rfbRef.current.sendKey(entry[0], entry[1]); } }, []);
+    const handleKeyboardKeyUp = useCallback((event) => { const entry = keyboardSpecials[event.key]; if (!entry || !modifierKeysRef.current.has(event.key)) return; event.preventDefault(); modifierKeysRef.current.delete(event.key); if (rfbRef.current && humanRef.current) rfbRef.current.sendKey(entry[0], entry[1], false); }, []);
+    const stopRemoteVoice = useCallback(() => { const recorder = remoteRecorderRef.current; if (recorder && recorder.state === "recording") recorder.stop(); }, []);
+    const recordRemoteVoice = useCallback(async () => {
+      if (remoteVoiceState === "recording") { stopRemoteVoice(); return; }
+      if (!humanRef.current || !rfbRef.current || remoteVoiceState === "transcribing") return;
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") { setError("Este navegador no permite grabar audio aquí."); return; }
+      setError("");
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
+        const mime = candidates.find((value) => typeof MediaRecorder.isTypeSupported !== "function" || MediaRecorder.isTypeSupported(value)) || "";
+        const recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+        remoteAudioChunksRef.current = []; remoteRecorderRef.current = recorder;
+        recorder.ondataavailable = (event) => { if (event.data?.size) remoteAudioChunksRef.current.push(event.data); };
+        recorder.onerror = () => { stream.getTracks().forEach((track) => track.stop()); remoteRecorderRef.current = null; setRemoteVoiceState("idle"); setError("La grabación de audio remoto falló."); };
+        recorder.onstop = async () => {
+          stream.getTracks().forEach((track) => track.stop()); remoteRecorderRef.current = null; setRemoteVoiceState("transcribing");
+          try {
+            const blob = new Blob(remoteAudioChunksRef.current, { type: recorder.mimeType || mime || "audio/webm" });
+            remoteAudioChunksRef.current = [];
+            const dataUrl = await blobToDataUrl(blob);
+            const result = await fetchJSON(`/api/audio/transcribe?profile=${encodeURIComponent(bot.name)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data_url: dataUrl, mime_type: blob.type || "audio/webm" }) });
+            const transcript = String(result?.transcript || "").trim(); if (!transcript) throw new Error("No se detectó voz en la grabación.");
+            sendKeyboardText(transcript); setRemoteVoiceState("idle");
+          } catch (error) { setRemoteVoiceState("idle"); setError(errText(error)); }
+        };
+        recorder.start(); setRemoteVoiceState("recording");
+      } catch (error) { setRemoteVoiceState("idle"); setError(error?.name === "NotAllowedError" ? "Permiso de micrófono denegado. Habilítalo para este sitio." : errText(error)); }
+    }, [bot.name, remoteVoiceState, sendKeyboardText, stopRemoteVoice]);
+    const start = useCallback(async () => {
+      setBusy(true); setError(""); setConnection("connecting");
+      try {
+        const rpc = getRpc(); const current = await screenRequest(rpc, "display.status", { profile: bot.name });
+        if (!current?.running) await screenRequest(rpc, "display.start", { profile: bot.name }, 30000); setStatus(await waitForScreenReady(rpc, bot.name));
+        const RFB = (await importWithTimeout(() => import(`${ASSET}/novnc/rfb.bundle.js`), 15000)).default; let lastError = null;
+        for (let attempt = 0; attempt < 4; attempt++) {
+          cleanup(); setConnection("connecting");
+          try {
+            const observed = await screenRequest(rpc, "display.observe", { profile: bot.name, viewer_id: viewerRef.current || undefined }); viewerRef.current = observed.viewer_id || viewerRef.current; setStatus(observed); if (!hostRef.current) throw new Error("El panel del escritorio ya no está montado");
+            const scheme = window.location.protocol === "https:" ? "wss:" : "ws:"; const wsUrl = new URL(`${scheme}//${window.location.host}${BASE}/api/display/ws`); wsUrl.searchParams.set("display_ticket", observed.ticket);
+            await new Promise((resolve, reject) => { let settled = false; let rfb = null; const socket = new WebSocket(wsUrl); socket.binaryType = "arraybuffer"; wsRef.current = socket; const timer = window.setTimeout(() => fail(new Error("El escritorio tardó demasiado en responder")), 12000); const fail = (error) => { if (settled) return; settled = true; window.clearTimeout(timer); try { rfb?.disconnect(); } catch (_) {} try { socket.close(); } catch (_) {} reject(error); }; const connected = () => { if (settled) return; settled = true; window.clearTimeout(timer); setConnection("live"); resolve(); }; socket.onerror = () => fail(new Error("No se pudo abrir el canal seguro del Bot Screen")); socket.onclose = (event) => { if (!settled) fail(new Error(`El canal del escritorio se cerró (${event.code}${event.reason ? `: ${event.reason}` : ""}) antes de mostrar la pantalla`)); else setConnection("idle"); }; try { rfb = new RFB(hostRef.current, socket, { shared: true }); rfb.scaleViewport = true; rfb.resizeSession = false; rfb.focusOnClick = !mobileModeRef.current; rfb.showDotCursor = false; rfb.hideCursor = mobileModeRef.current; rfb.viewOnly = true; rfb.background = "transparent"; const clipboardListener = (event) => setRemoteClipboard(String(event.detail?.text || "")); clipboardListenerRef.current = clipboardListener; rfb.addEventListener("clipboard", clipboardListener); rfb.addEventListener("connect", connected); rfb.addEventListener("disconnect", () => { if (!settled) fail(new Error("noVNC desconectó el escritorio antes del primer frame")); }); rfbRef.current = rfb; } catch (error) { fail(error); } });
+            await acquireLease(); return;
+          } catch (error) { lastError = error; cleanup(); if (attempt < 3) await sleep(500 + attempt * 350); }
+        }
+        throw lastError || new Error("No se pudo conectar al Bot Screen");
+      } catch (e) { rpcRef.current?.close(); setConnection("error"); setError(errText(e)); } finally { setBusy(false); }
+    }, [acquireLease, bot.name, cleanup, getRpc]);
+    const takeOver = acquireLease;
+    const handBack = useCallback(async () => { if (!viewerRef.current) return; setBusy(true); try { const r = await screenRequest(getRpc(), "display.lease.release", { profile: bot.name, viewer_id: viewerRef.current }); setHumanLease(false); setStatus((s) => ({ ...(s || {}), lease: r.lease })); if (rfbRef.current) rfbRef.current.viewOnly = true; } catch (e) { setError(errText(e)); } finally { setBusy(false); } }, [bot.name, getRpc, setHumanLease]);
+    const closePanel = useCallback(async () => { try { if (humanRef.current && viewerRef.current) await screenRequest(getRpc(), "display.lease.release", { profile: bot.name, viewer_id: viewerRef.current }); } catch (_) {} onClose(); }, [bot.name, getRpc, onClose]);
+    useEffect(() => { viewerRef.current = ""; start(); return () => { cleanup(); rpcRef.current?.close(); }; }, [bot.name, cleanup, start]);
+    const transform = { transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` };
+    const mobileToolbar = h("div", { className: "hb-screen-mobile-toolbar" }, iconButton("Cerrar escritorio", closeIcon(), closePanel, "hb-screen-mobile-button"), h("div", { className: "hb-screen-mobile-title" }, monitorIcon(), h("span", null, `Ordenador de ${profileLabel(bot)}`)), iconButton(fullscreen ? "Salir de pantalla completa" : "Pantalla completa", fullscreenIcon(), toggleFullscreen, "hb-screen-mobile-button"), iconButton("Reconectar", refreshIcon(), start, "hb-screen-mobile-button", busy));
+    const mobileControls = h("div", { className: "hb-screen-mobile-controls" }, h("div", { className: "hb-screen-control-group" }, iconButton("Atrás", arrowLeftIcon(), () => sendBrowserKey(0xff51, "ArrowLeft"), "hb-screen-mobile-button", !human || busy), iconButton("Adelante", arrowRightIcon(), () => sendBrowserKey(0xff53, "ArrowRight"), "hb-screen-mobile-button", !human || busy)), h("div", { className: "hb-screen-control-group" }, iconButton(keyboardOpen ? "Cerrar teclado" : "Teclado", keyboardIcon(), toggleKeyboard, "hb-screen-mobile-button", !human), iconButton(remoteVoiceState === "recording" ? "Detener audio remoto" : remoteVoiceState === "transcribing" ? "Transcribiendo audio remoto…" : "Grabar audio remoto", remoteVoiceState === "recording" ? stopIcon() : microphoneIcon(), recordRemoteVoice, `hb-screen-mobile-button ${remoteVoiceState === "recording" ? "voice-recording" : ""}`, !human || remoteVoiceState === "transcribing"), iconButton("Copiar", copyIcon(), copyRemote, "hb-screen-mobile-button", !remoteClipboard), iconButton("Pegar", clipboardIcon(), pasteLocal, "hb-screen-mobile-button", !human)));
+    return h("section", { className: "hb-card hb-screen-panel", ref: panelRef }, mobileToolbar, h("div", { className: "hb-panel-heading hb-screen-desktop-heading" }, h(BotCharacter, { bot, size: "small" }), h("div", { className: "hb-bot-name" }, h("strong", null, profileLabel(bot)), h("span", null, status?.running ? "Pantalla activa" : "Pantalla detenida")), iconButton(fullscreen ? "Salir de pantalla completa" : "Pantalla completa", fullscreenIcon(), toggleFullscreen), button("Cerrar", closePanel, "ghost")), error ? h("div", { className: "hb-error" }, error) : null, h("div", { className: "hb-screen-frame", ref: frameRef }, h("div", { className: "hb-screen-viewport", style: transform }, h("div", { className: "hb-screen-host", ref: hostRef, "aria-label": `Escritorio de ${profileLabel(bot)}` })), connection !== "live" ? h("div", { className: "hb-screen-placeholder" }, h("strong", null, connection === "connecting" || busy ? "Conectando…" : "Bot Screen"), connection === "error" && error ? error : connection === "idle" && !busy ? "Vista solo lectura hasta que la inicies." : connection === "connecting" || busy ? "Esperando respuesta del monitor…" : "Revisa el error y reintenta.") : null, mobileMode && connection === "live" ? h("div", { className: "hb-screen-touch-layer", onPointerDown: handlePointerDown, onPointerMove: handlePointerMove, onPointerUp: handlePointerUp, onPointerCancel: handlePointerUp, onWheel: (event) => { if (event.ctrlKey) { event.preventDefault(); setViewportZoom(zoomRef.current + (event.deltaY < 0 ? .25 : -.25), event.clientX, event.clientY); } } }) : null, h("textarea", { ref: keyboardRef, className: "hb-screen-keyboard-input", "aria-label": "Teclado del escritorio remoto", onInput: handleKeyboardInput, onKeyDown: handleKeyboardKey, onKeyUp: handleKeyboardKeyUp, onBlur: () => window.setTimeout(() => { if (document.activeElement !== keyboardRef.current) closeKeyboard(); }, 80), inputMode: "text", autoCapitalize: "sentences", autoCorrect: "on", spellCheck: false, tabIndex: keyboardOpen ? 0 : -1 })), mobileControls, h("div", { className: "hb-screen-bar hb-screen-desktop-bar" }, h("span", { className: "hb-status" }, connection === "live" ? (human ? "Tú tienes el control" : "Solo lectura · bot en control") : connection === "connecting" || busy ? "Conectando…" : "Sin conexión"), button(connection === "live" ? "Reconectar" : busy ? "Conectando…" : "Ver escritorio", start, "primary", busy), connection === "live" && !human ? button("Tomar control", takeOver, "", busy) : null, connection === "live" && human ? button("Devolver al bot", handBack, "", busy) : null), h("p", { className: "hb-mobile-note" }, `Zoom ${zoom.toFixed(1)}× · tocá para manipular · pellizcá para ampliar`));
+  }
+
+  function SettingsSheet({ bot, onClose, onSaved }) {
+    const [options, setOptions] = useState(null); const [skills, setSkills] = useState([]); const [tools, setTools] = useState([]); const [choice, setChoice] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+    useEffect(() => { Promise.all([api.getModelOptions(bot.name), api.getSkills(bot.name), api.getToolsets(bot.name)]).then(([models, skillRows, toolRows]) => { setOptions(models); setSkills(skillRows || []); setTools(toolRows || []); if (models?.provider && models?.model) setChoice(`${models.provider}\0${models.model}`); }).catch((e) => setError(errText(e))); }, [bot.name]);
+    const saveModel = async () => { if (!choice) return; const [provider, model] = choice.split("\0"); setBusy(true); try { await api.setProfileModel(bot.name, provider, model); await onSaved(); } catch (e) { setError(errText(e)); } finally { setBusy(false); } };
+    const toggleSkill = async (skill) => { setBusy(true); try { await api.toggleSkill(skill.name, !skill.enabled, bot.name); setSkills((rows) => rows.map((r) => r.name === skill.name ? { ...r, enabled: !r.enabled } : r)); } catch (e) { setError(errText(e)); } finally { setBusy(false); } };
+    const toggleTool = async (tool) => { setBusy(true); try { await api.toggleToolset(tool.name, !tool.enabled, bot.name); setTools((rows) => rows.map((r) => r.name === tool.name ? { ...r, enabled: !r.enabled } : r)); } catch (e) { setError(errText(e)); } finally { setBusy(false); } };
+    const providers = Array.isArray(options?.providers) ? options.providers : [];
+    return h("div", { className: "hb-sheet-backdrop", role: "presentation", onClick: onClose }, h("section", { className: "hb-sheet", role: "dialog", "aria-modal": "true", onClick: (e) => e.stopPropagation() }, h("div", { className: "hb-panel-heading" }, h("div", null, h("h2", null, "Configuración del bot"), h("p", { className: "hb-subtitle" }, profileLabel(bot))), button("Cerrar", onClose, "ghost")), error ? h("div", { className: "hb-error" }, error) : null, h("label", { className: "hb-field" }, "Modelo y proveedor", h("select", { className: "hb-select", value: choice, onChange: (e) => setChoice(e.target.value) }, h("option", { value: "" }, "Usar configuración del perfil"), providers.map((p) => h("optgroup", { key: p.slug, label: p.name || p.slug }, (p.models || []).map((m) => h("option", { key: `${p.slug}-${m}`, value: `${p.slug}\0${m}` }, m))))), choice ? button(busy ? "Guardando…" : "Guardar modelo", saveModel, "primary", busy) : null), h("div", { className: "hb-field" }, h("label", null, "Skills (solo este perfil)"), h("div", { className: "hb-checklist" }, skills.map((s) => h("label", { className: "hb-check", key: s.name }, h("input", { type: "checkbox", checked: !!s.enabled, onChange: () => toggleSkill(s), disabled: busy }), h("span", null, s.name)))), h("div", { className: "hb-field" }, h("label", null, "Herramientas / toolsets (solo este perfil)"), h("div", { className: "hb-checklist" }, tools.map((t) => h("label", { className: "hb-check", key: t.name }, h("input", { type: "checkbox", checked: !!t.enabled, onChange: () => toggleTool(t), disabled: busy }), h("span", null, t.name))))))));
+  }
+
+  function CreateBotSheet({ onClose, onCreated }) {
+    const [name, setName] = useState("");
+    const [description, setDescription] = useState("");
+    const [provider, setProvider] = useState("");
+    const [model, setModel] = useState("");
+    const [options, setOptions] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState("");
+    const [confirming, setConfirming] = useState(false);
+    useEffect(() => { api.getModelOptions().then(setOptions).catch(() => {}); }, []);
+    const validate = () => {
+      const clean = name.trim().toLowerCase();
+      if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(clean)) { setError("Usa un identificador con letras minúsculas, números, _ o -."); return null; }
+      setError(""); return clean;
+    };
+    const review = () => { if (validate()) setConfirming(true); };
+    const create = async () => {
+      const clean = validate(); if (!clean) return;
+      setBusy(true);
+      try { await api.createProfile({ name: clean, description: description.trim(), provider: provider || undefined, model: model || undefined }); await onCreated(); onClose(); }
+      catch (e) { setError(errText(e)); }
+      finally { setBusy(false); }
+    };
+    const providers = Array.isArray(options?.providers) ? options.providers : [];
+    const header = h("div", { className: "hb-panel-heading" }, h("div", null, h("h2", null, "Nuevo bot"), h("p", { className: "hb-subtitle" }, "Cada bot conserva su perfil, memoria, skills y pantalla.")), button("Cerrar", onClose, "ghost"));
+    const providerField = h("label", { className: "hb-field" }, "Proveedor", h("select", { className: "hb-select", value: provider, onChange: (e) => { setProvider(e.target.value); setModel(""); setConfirming(false); } }, h("option", { value: "" }, "Configuración del perfil"), providers.map((p) => h("option", { key: p.slug, value: p.slug }, p.name || p.slug))));
+    const modelField = provider ? h("label", { className: "hb-field" }, "Modelo", h("select", { className: "hb-select", value: model, onChange: (e) => { setModel(e.target.value); setConfirming(false); } }, h("option", { value: "" }, "Elegir modelo"), (providers.find((p) => p.slug === provider)?.models || []).map((m) => h("option", { key: m, value: m }, m)))) : null;
+    const form = h("div", null,
+      h("label", { className: "hb-field" }, "Identificador", h("input", { className: "hb-input", value: name, placeholder: "investigacion", onChange: (e) => { setName(e.target.value); setConfirming(false); }, autoFocus: true })),
+      h("label", { className: "hb-field" }, "Descripción", h("textarea", { className: "hb-textarea", value: description, rows: 3, placeholder: "Qué función cumple este bot…", onChange: (e) => { setDescription(e.target.value); setConfirming(false); } })),
+      providerField,
+      modelField,
+      button("Revisar y confirmar", review, "primary", !name.trim())
+    );
+    const confirmation = h("div", { className: "hb-confirmation" }, h("strong", null, "Revisa antes de crear"), h("p", null, `Bot: ${name.trim().toLowerCase()}`), h("p", null, description.trim() || "Sin descripción adicional"), h("p", null, `${provider || "Proveedor del perfil"}${model ? ` · ${model}` : ""}`), h("div", { className: "hb-row-actions" }, button(busy ? "Creando…" : "Confirmar creación", create, "primary", busy), button("Volver a editar", () => setConfirming(false), "ghost", busy)));
+    return h("div", { className: "hb-sheet-backdrop", role: "presentation" }, h("section", { className: "hb-sheet", role: "dialog", "aria-modal": "true", onClick: (e) => e.stopPropagation() }, header, error ? h("div", { className: "hb-error" }, error) : null, confirming ? confirmation : form));
+  }
+
+  function BotCard({ bot, onChat, onScreen, onSettings, onEdit }) {
+    return h("article", { className: `hb-bot-card ${bot.is_default ? "director-card" : ""}` }, h("div", { className: "hb-bot-top" }, h(BotCharacter, { bot, size: "large" }), h("div", { className: "hb-bot-name" }, h("strong", null, profileLabel(bot)), h("span", null, bot.is_default ? "Chief of Staff · director" : bot.description || "Perfil independiente")), bot.is_default ? h("span", { className: "hb-chip director" }, "DIRECTOR") : null), h("div", { className: "hb-chip-row" }, h("span", { className: "hb-chip" }, bot.model || "modelo del perfil"), h("span", { className: `hb-chip ${bot.gateway_running ? "live" : ""}` }, bot.gateway_running ? "Activo" : "Listo"), h("span", { className: "hb-chip" }, `${bot.skill_count || 0} skills`)), h("p", { className: "hb-description" }, bot.is_default ? "Coordina la flota y decide qué capacidades necesita cada trabajo." : bot.description || "Memoria, modelo, skills y escritorio aislados de los demás bots."), h("div", { className: "hb-row-actions" }, button("Abrir chat", () => onChat(bot), "primary"), iconButton("Abrir monitor", monitorIcon(), () => onScreen(bot)), button("Configurar", () => onSettings(bot), "ghost"), button("Editar", () => onEdit(bot), "ghost")), h("button", { className: "hb-advanced-link", type: "button", onClick: () => window.location.assign(`${BASE}/chat?profile=${encodeURIComponent(bot.name)}`) }, "Terminal avanzado / fallback →"));
+  }
+
+  const nativeGroupRoomId = (groupId) => `hermes-bots-${String(groupId || "group").toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").slice(0, 96)}`;
+  const nativeGroupHandle = (profile) => String(profile || "bot").toLowerCase().replace(/[^a-z0-9_.:-]+/g, "-").slice(0, 64) || "bot";
+  const nativeGroupEventText = (event) => {
+    const payload = event?.payload || {}; const actor = event?.actor?.display_name || event?.actor?.profile || event?.actor?.id || "El grupo";
+    if (event?.kind === "message.user" || event?.kind === "message.member") return String(payload.text || "").trim();
+    if (event?.kind === "turn.started") return `${actor} está trabajando…`;
+    if (event?.kind === "turn.settled") return `${actor} terminó su ronda.`;
+    if (event?.kind === "turn.failed") return `${actor} no pudo completar esta ronda.`;
+    if (event?.kind === "turn.cancelled") return `${actor} canceló su ronda.`;
+    if (event?.kind === "member.unavailable") return `${actor} no está disponible en este momento.`;
+    if (event?.kind === "room.activity") return `Estado del grupo: ${String(payload.status || "actualizando")}.`;
+    return "";
+  };
+  const nativeGroupActor = (event) => event?.actor?.display_name || event?.actor?.profile || event?.actor?.id || (event?.kind === "message.user" ? "Tú" : "Hermes");
+  function GroupRoomEvent({ event }) {
+    const text = nativeGroupEventText(event); if (!text) return null;
+    const user = event.kind === "message.user"; const activity = !user && event.kind !== "message.member";
+    const stamp = event.created_at ? new Date(Number(event.created_at) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+    return h("article", { className: `hb-group-message ${user ? "user" : activity ? "activity" : "member"}` }, h("div", { className: "hb-group-message-meta" }, h("strong", null, nativeGroupActor(event)), stamp ? h("time", null, stamp) : null), h("p", null, text));
+  }
+  function GroupRoomView({ bots, groupId }) {
+    const [group, setGroup] = useState(null); const [room, setRoom] = useState(null); const [events, setEvents] = useState([]); const [driver, setDriver] = useState(null); const [capabilities, setCapabilities] = useState(null); const [draft, setDraft] = useState(""); const [phase, setPhase] = useState("loading"); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [coordinatorName, setCoordinatorName] = useState("");
+    const rpcRef = useRef(null); const aliveRef = useRef(true); const cursorRef = useRef(0); const syncLockRef = useRef(false); const syncRoomRef = useRef(null); const threadRef = useRef("");
+    const appendEvents = useCallback((incoming) => { if (!incoming?.length) return; setEvents((current) => { const map = new Map(current.map((event) => [event.event_id, event])); incoming.forEach((event) => { if (event?.event_id) map.set(event.event_id, event); }); return [...map.values()].sort((a, b) => Number(a.seq || 0) - Number(b.seq || 0)); }); }, []);
+    useEffect(() => {
+      aliveRef.current = true; let timer = null;
+      const setup = async () => {
+        try {
+          if (!bots.length) { setPhase("loading"); return; }
+          const config = await fetchJSON(`/api/plugins/${PLUGIN}/groups`); const row = (config.groups || []).find((item) => item.id === groupId);
+          if (!row) throw new Error("No se encontró la configuración de este grupo.");
+          const names = [...new Set((row.members || []).map((name) => String(name).trim().toLowerCase()).filter(Boolean))];
+          if (names.length < 2 || names.length > 6) throw new Error("La sala nativa necesita entre 2 y 6 bots miembros.");
+          const coordinator = bots.find((bot) => bot.is_default) || bots.find((bot) => names.includes(bot.name)) || bots[0];
+          if (!coordinator) throw new Error("No hay un perfil coordinador disponible.");
+          const known = new Map(bots.map((bot) => [bot.name, bot])); const memberInputs = names.map((name) => ({ member_id: name, profile: name, handle: nativeGroupHandle(name), display_name: profileLabel(known.get(name) || { name }) }));
+          const roomId = nativeGroupRoomId(row.id); const threadId = `thread-${roomId}`;
+          setGroup({ ...row, members: names }); setCoordinatorName(coordinator.name); threadRef.current = threadId; setPhase("connecting");
+          const rpc = new RpcClient(coordinator.name); rpcRef.current = rpc;
+          const caps = await screenRequest(rpc, "groups.capabilities", { profile: coordinator.name }, 8000); if (!caps?.driver || !Array.isArray(caps.methods) || !caps.methods.includes("groups.send")) throw new Error("El Gateway no tiene habilitado el driver nativo de grupos.");
+          setCapabilities(caps);
+          const listing = await screenRequest(rpc, "groups.list", { profile: coordinator.name, limit: 500 }, 8000); let nativeRoom = (listing.rooms || []).find((item) => item.room_id === roomId);
+          if (!nativeRoom) nativeRoom = (await screenRequest(rpc, "groups.create", { profile: coordinator.name, room_id: roomId, name: row.name, members: memberInputs }, 12000)).room;
+          if (!nativeRoom) throw new Error("El Gateway no devolvió la sala nativa.");
+          setRoom(nativeRoom); setPhase("live");
+          const sync = async () => {
+            if (!aliveRef.current || syncLockRef.current || !rpcRef.current) return; syncLockRef.current = true;
+            try {
+              let since = cursorRef.current || null; let page;
+              do { page = await screenRequest(rpc, "groups.log", { profile: coordinator.name, room_id: roomId, since_seq: since, limit: Math.min(200, caps.max_log_limit || 200) }, 8000); appendEvents(page.events || []); const next = Number(page.latest_seq || since || 0); if (next <= Number(since || 0) && !(page.events || []).length) break; since = next; } while (page?.has_more);
+              cursorRef.current = Number(since || 0); const state = await screenRequest(rpc, "groups.state", { profile: coordinator.name, room_id: roomId }, 8000); if (state.room) setRoom(state.room); setDriver(state.driver_status || null); setError("");
+            } catch (err) { if (aliveRef.current) setError(errText(err)); } finally { syncLockRef.current = false; }
+          };
+          syncRoomRef.current = sync; await sync(); timer = window.setInterval(sync, 1800);
+        } catch (err) { if (aliveRef.current) { setPhase("error"); setError(errText(err)); } }
+      };
+      setup();
+      return () => { aliveRef.current = false; if (timer) window.clearInterval(timer); syncRoomRef.current = null; try { rpcRef.current?.close(); } catch (_) {} rpcRef.current = null; };
+    }, [appendEvents, bots, groupId]);
+    const send = useCallback(async () => {
+      const text = draft.trim(); const currentRoom = room; const profile = coordinatorName; if (!text || !currentRoom || !profile || !rpcRef.current || busy) return; setDraft(""); setBusy(true); setError("");
+      try { const eventId = `mobile-${Date.now()}-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)}`; const result = await screenRequest(rpcRef.current, "groups.send", { profile, room_id: currentRoom.room_id, event_id: eventId, payload: { thread_id: threadRef.current, text } }, 12000); if (result?.accepted === false) throw new Error("El grupo no aceptó el mensaje."); await syncRoomRef.current?.(); } catch (err) { setError(errText(err)); } finally { setBusy(false); }
+    }, [busy, coordinatorName, draft, room]);
+    const stop = useCallback(async () => { if (!room || !coordinatorName || !rpcRef.current) return; setBusy(true); try { await screenRequest(rpcRef.current, "groups.stop", { profile: coordinatorName, room_id: room.room_id }, 12000); await syncRoomRef.current?.(); } catch (err) { setError(errText(err)); } finally { setBusy(false); } }, [coordinatorName, room]);
+    const members = room?.members || group?.members || []; const working = Boolean(driver?.working); const pending = Array.isArray(driver?.pending_actions) && driver.pending_actions.length > 0;
+    if (phase === "loading") return h("div", { className: "hb-group-room hb-card hb-info" }, "Cargando sala del grupo…");
+    return h("div", { className: "hb-group-room" }, h("header", { className: "hb-group-room-header" }, button("‹", () => navigate({ view: "groups" }), "icon ghost"), h("div", { className: "hb-group-room-identity" }, h("div", { className: "hb-avatar", style: avatarTone(room?.name || group?.name || "Grupo") }, "G"), h("div", null, h("strong", null, room?.name || group?.name || "Grupo"), h("span", null, `${members.length} bots · ${working ? "trabajando…" : capabilities?.driver ? "driver nativo activo" : "sala nativa"}`))), h("div", { className: "hb-group-room-actions" }, pending ? h("span", { className: "hb-group-attention", role: "status" }, "Necesita tu decisión") : null, working ? button(busy ? "Deteniendo…" : "Detener", stop, "ghost", busy) : null)), error ? h("div", { className: "hb-error" }, error) : null, h("div", { className: "hb-group-member-strip", "aria-label": "Miembros del grupo" }, members.map((member) => h("span", { className: "hb-member", key: member.member_id || member.profile || member }, member.display_name || member.profile || member))), h("main", { className: "hb-group-messages", "aria-live": "polite" }, events.length ? events.map((event) => h(GroupRoomEvent, { event, key: event.event_id })) : h("div", { className: "hb-group-empty" }, h("strong", null, "Sala lista"), h("p", null, "Escribí una tarea. Los bots decidirán quién responde y podrán convocarse entre ellos."))), h("div", { className: "hb-group-composer-wrap" }, h("textarea", { className: "hb-group-composer", value: draft, placeholder: "Escribí una tarea para el grupo…", "aria-label": "Mensaje para el grupo", onChange: (event) => setDraft(event.target.value), onKeyDown: (event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent?.isComposing) { event.preventDefault(); send(); } } }), h("div", { className: "hb-group-composer-bar" }, h("span", { className: "hb-compose-hint" }, "Enter envía · Shift+Enter agrega una línea"), button(busy ? "Enviando…" : "Enviar al grupo", send, "primary", busy || !draft.trim() || phase !== "live"))));
+  }
+
+  function GroupsView({ bots }) {
+    const [groups, setGroups] = useState([]); const [selected, setSelected] = useState(null); const [draft, setDraft] = useState(""); const [members, setMembers] = useState([]); const [skills, setSkills] = useState([]); const [availableSkills, setAvailableSkills] = useState([]); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
+    const load = useCallback(async () => { try { const r = await fetchJSON(`/api/plugins/${PLUGIN}/groups`); setGroups(r.groups || []); } catch (e) { setError(errText(e)); } }, []);
+    useEffect(() => { load(); }, [load]);
+    useEffect(() => { if (!selected) return; setMembers(selected.members || []); setSkills(selected.skills || []); Promise.all((selected.members || []).map((n) => api.getSkills(n).catch(() => []))).then((lists) => { const map = new Map(); lists.flat().forEach((s) => s?.name && map.set(s.name, s)); setAvailableSkills([...map.values()].sort((a, b) => a.name.localeCompare(b.name))); }); }, [selected]);
+    const toggle = (list, value) => list.includes(value) ? list.filter((x) => x !== value) : [...list, value];
+    const create = async () => { if (!draft.trim()) return; try { const row = await fetchJSON(`/api/plugins/${PLUGIN}/groups`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: draft.trim(), members: [], skills: [] }) }); setDraft(""); await load(); setSelected(row); } catch (e) { setError(errText(e)); } };
+    const save = async () => { if (!selected) return; setBusy(true); try { const row = await fetchJSON(`/api/plugins/${PLUGIN}/groups/${encodeURIComponent(selected.id)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: selected.name, members, skills }) }); await Promise.all(bots.filter((b) => members.includes(b.name)).flatMap((b) => availableSkills.filter((s) => skills.includes(s.name)).map((s) => api.toggleSkill(s.name, true, b.name)))); setSelected(row); await load(); } catch (e) { setError(errText(e)); } finally { setBusy(false); } };
+    return h("div", { className: "hb-groups-view" }, error ? h("div", { className: "hb-error" }, error) : null, h("section", { className: "hb-card group-create" }, h("div", null, h("strong", null, "Grupos de trabajo"), h("p", { className: "hb-subtitle" }, "Administración de miembros y skills; la sala nativa de Hermes sigue siendo la fuente del chat grupal.")), h("div", { className: "hb-row-actions" }, h("input", { className: "hb-input", value: draft, placeholder: "Ej. Investigación", onChange: (e) => setDraft(e.target.value) }), button("Crear grupo", create, "primary", !draft.trim()))), h("div", { className: "hb-group-grid" }, groups.map((g) => h("article", { className: `hb-card hb-group-card ${selected?.id === g.id ? "selected" : ""}`, key: g.id }, h("h3", null, g.name), h("p", null, `${(g.members || []).length} bots · ${(g.skills || []).length} skills aplicadas`), h("div", { className: "hb-member-list" }, (g.members || []).map((m) => h("span", { className: "hb-member", key: m }, m))), h("div", { className: "hb-row-actions" }, button("Abrir sala", () => navigate({ view: "group", group: g.id }), "primary", (g.members || []).length < 2 || (g.members || []).length > 6), button("Administrar", () => setSelected(g), "ghost"))))), selected ? h("section", { className: "hb-card hb-group-editor" }, h("div", { className: "hb-panel-heading" }, h("h3", null, `Editar ${selected.name}`), button("Cerrar", () => setSelected(null), "ghost")), h("div", { className: "hb-field" }, h("label", null, "Miembros"), h("div", { className: "hb-checklist" }, bots.map((b) => h("label", { className: "hb-check", key: b.name }, h("input", { type: "checkbox", checked: members.includes(b.name), onChange: () => setMembers(toggle(members, b.name)) }), h("span", null, profileLabel(b))))), h("div", { className: "hb-field" }, h("label", null, "Skills del grupo · se aplican por perfil"), h("div", { className: "hb-checklist" }, availableSkills.map((s) => h("label", { className: "hb-check", key: s.name }, h("input", { type: "checkbox", checked: skills.includes(s.name), onChange: () => setSkills(toggle(skills, s.name)) }), h("span", null, s.name)))), h("p", { className: "hb-subtitle" }, "No se habilitan skills globales: la sala mobile usa el driver nativo de Hermes y conserva su historial como fuente de verdad."), button(busy ? "Aplicando…" : "Guardar y aplicar", save, "primary", busy)))) : null);
+  }
+
+  function RecentActivity({ bots }) {
+    const [rows, setRows] = useState([]);
+    useEffect(() => { let alive = true; Promise.all(bots.slice(0, 8).map(async (bot) => { try { const r = await fetchJSON(`/api/sessions?limit=3&order=recent&profile=${encodeURIComponent(bot.name)}`); return (r.sessions || []).map((s) => ({ ...s, profile: bot.name, label: profileLabel(bot) })); } catch (_) { return []; } })).then((lists) => alive && setRows(lists.flat().sort((a, b) => (b.last_active || b.started_at || 0) - (a.last_active || a.started_at || 0)).slice(0, 8))); return () => { alive = false; }; }, [bots]);
+    if (!rows.length) return h("div", { className: "hb-empty-activity" }, "Cuando un bot tenga conversaciones, aparecerán aquí.");
+    return h("div", { className: "hb-activity-list" }, rows.map((row) => h("button", { className: "hb-activity-row", type: "button", key: `${row.profile}-${row.id}`, onClick: () => navigate({ view: "chat", profile: row.profile, session: row.id }) }, h(BotCharacter, { bot: { name: row.profile, display_name: row.label }, size: "small" }), h("span", { className: "hb-activity-copy" }, h("strong", null, row.title || row.preview || "Conversación"), h("small", null, `${row.label} · ${row.message_count || 0} mensajes`)), h("span", { className: "hb-chevron" }, "›"))));
+  }
+
+  function RosterView({ bots, loading, error, onRefresh, onCreate, onSettings, onScreen }) {
+    const [search, setSearch] = useState("");
+    const director = bots.find((bot) => bot.is_default);
+    const filtered = bots.filter((bot) => !search || `${profileLabel(bot)} ${bot.description || ""}`.toLowerCase().includes(search.toLowerCase()));
+    const header = h("header", { className: "hb-roster-header" },
+      h("div", { className: "hb-brand" }, h("div", { className: "hb-avatar", style: avatarTone("Hermes") }, "H"), h("div", null, h("h1", null, "Bot Command"), h("p", { className: "hb-subtitle" }, "Tu equipo Hermes, en una vista móvil."))),
+      h("div", { className: "hb-header-actions" }, h("label", { className: "hb-search" }, h("span", null, "⌕"), h("input", { value: search, placeholder: "Buscar bots", "aria-label": "Buscar bots", onChange: (event) => setSearch(event.target.value) })), button("+", onCreate, "icon primary")));
+    const toolbar = h("div", { className: "hb-roster-toolbar" }, h("div", null, h("span", { className: "hb-kicker" }, "FLOTA ACTIVA"), h("h2", null, `${bots.length} ${bots.length === 1 ? "bot" : "bots"} disponibles`)), button("Actualizar", onRefresh, "ghost", loading));
+    const featured = director ? h("section", { className: "hb-featured", onClick: () => navigate({ view: "chat", profile: director.name }) }, h("div", { className: "hb-featured-glow" }), h(BotCharacter, { bot: director, size: "featured" }), h("div", { className: "hb-featured-copy" }, h("span", { className: "hb-kicker" }, "CHIEF OF STAFF"), h("h2", null, profileLabel(director)), h("p", null, director.description || "Tu director para organizar trabajo y coordinar especialistas."), h("span", { className: "hb-featured-cta" }, "Abrir conversación ·"))) : null;
+    const botSection = h("section", { className: "hb-section" }, h("div", { className: "hb-section-heading" }, h("div", null, h("span", { className: "hb-kicker" }, "MIS BOTS"), h("h2", null, "Listos para trabajar")), h("span", { className: "hb-subtitle" }, "Toca uno para conversar")), h("div", { className: "hb-bot-list" }, filtered.map((bot) => h(BotCard, { bot, key: bot.name, onChat: (item) => navigate({ view: "chat", profile: item.name }), onScreen, onSettings }))));
+    const activity = h("section", { className: "hb-section activity-section" }, h("div", { className: "hb-section-heading" }, h("div", null, h("span", { className: "hb-kicker" }, "ACTIVIDAD"), h("h2", null, "Reciente")), button("Grupos", () => navigate({ view: "groups" }), "ghost")), h(RecentActivity, { bots }));
+    return h("div", { className: "hb-shell" }, header, toolbar, error ? h("div", { className: "hb-error" }, error) : null, loading ? h("div", { className: "hb-card hb-info" }, "Cargando roster…") : null, featured, botSection, activity);
+  }
+
+  function DirectorQuickActions({ onSelect }) {
+    const actions = [
+      ["Crear un bot", "Quiero crear un nuevo bot especialista. Pregúntame qué rol, misión, modelo y herramientas necesita."],
+      ["Crear una flota", "Quiero crear dentro de Hermes una flota de bots con un orquestador y especialistas. Entiende el proyecto y propón los roles."],
+      ["Ver mi flota", "Muéstrame un resumen de mis bots, su estado y para qué sirve cada uno."],
+      ["Elegir un modelo", "Ayúdame a elegir el modelo y proveedor adecuados para una tarea."],
+      ["Planificar una tarea", "Necesito resolver una tarea. Entiende el objetivo y proponme el siguiente paso."],
+    ];
+    return h("div", { className: "hb-quick-actions", "aria-label": "Acciones rápidas del director" }, actions.map(([label, prompt]) => h("button", { className: "hb-quick-action", key: label, type: "button", onClick: () => onSelect(prompt) }, label)));
+  }
+
+  function ClarifyCard({ frame, profile, rpc, onResolved }) {
+    const questions = frame.params?.questions || [];
+    const [answers, setAnswers] = useState(() => Object.fromEntries(questions.map((question) => { const value = frame.params?.answers?.[question.qid]; if (question.multi_select && typeof value === "string") { try { return [question.qid, (JSON.parse(value) || []).join("\n")]; } catch (_) {} } return [question.qid, value == null ? "" : String(value)]; })));
+    const [other, setOther] = useState({}); const [otherOpen, setOtherOpen] = useState({}); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+    const choose = (qid, value, multi) => setAnswers((current) => { if (!multi) return { ...current, [qid]: value }; const values = String(current[qid] || "").split("\n").filter(Boolean); return { ...current, [qid]: (values.includes(value) ? values.filter((item) => item !== value) : [...values, value]).join("\n") }; });
+    const selected = (qid, value) => String(answers[qid] || "").split("\n").includes(value);
+    const submit = async () => {
+      setBusy(true); setError("");
+      try {
+        for (const question of questions) {
+          const extra = String(other[question.qid] || "").trim(); const values = String(answers[question.qid] || "").split("\n").filter(Boolean); if (extra) values.push(extra);
+          const answer = values.length ? question.multi_select ? JSON.stringify(values) : values[values.length - 1] : null;
+          await rpc.request("clarify.lock", { request_id: frame.id, question_id: question.qid, answer, profile });
+        }
+        onResolved(frame.id);
+      } catch (e) { setError(errText(e)); } finally { setBusy(false); }
+    };
+    return h("div", { className: "hb-clarify" }, h("strong", null, "El bot necesita una decisión"), questions.map((question) => h("div", { className: "hb-clarify-question", key: question.qid }, h("p", null, question.question), question.choices?.length ? h("div", { className: "hb-choice-list" }, question.choices.map((choice) => h("button", { className: `hb-choice ${selected(question.qid, choice) ? "selected" : ""}`, type: "button", key: choice, onClick: () => choose(question.qid, choice, question.multi_select) }, choice)), h("button", { className: `hb-choice ${otherOpen[question.qid] ? "selected" : ""}`, type: "button", onClick: () => setOtherOpen((current) => ({ ...current, [question.qid]: !current[question.qid] })) }, "Otra opción"), otherOpen[question.qid] ? h("input", { className: "hb-input", placeholder: "Escribe otra opción", value: other[question.qid] || "", onChange: (event) => setOther((current) => ({ ...current, [question.qid]: event.target.value })) }) : null) : h("input", { className: "hb-input", placeholder: "Escribe tu respuesta", value: answers[question.qid] || "", onChange: (event) => setAnswers((current) => ({ ...current, [question.qid]: event.target.value })) }))), error ? h("div", { className: "hb-voice-error" }, error) : null, button(busy ? "Guardando…" : "Continuar", submit, "primary", busy));
+  }
+
+  function ApprovalCard({ frame, onRespond }) { const [choice, setChoice] = useState("once"); const params = frame.params || {}; const accountAccess = /cuenta|account|acceso|access|oauth|credencial|credential|conectar|connect/i.test(`${params.description || ""} ${params.tool_name || ""}`); return h("div", { className: "hb-approval" }, h("strong", null, accountAccess ? "Solicitud de acceso a una cuenta" : "El bot necesita tu aprobación"), h("p", null, params.description || params.command || "Acción protegida"), h("div", { className: "hb-row-actions" }, h("select", { className: "hb-select", value: choice, onChange: (e) => setChoice(e.target.value) }, h("option", { value: "once" }, "Permitir una vez"), h("option", { value: "session" }, "Permitir durante esta sesión"), h("option", { value: "deny" }, "Denegar")), button("Responder", () => onRespond(frame.id, { choice, all: false }), "primary"))); }
+
+  function NoticeCard({ notice }) {
+    const payload = notice.payload || notice;
+    return h("div", { className: `hb-notice hb-notice-${payload.level || "info"}` }, h("strong", null, payload.title || "Hermes"), h("p", null, payload.text || payload.message || "Aviso del Gateway"));
+  }
+
+  function SecureRequestNotice({ frame }) {
+    const params = frame.params || {};
+    const label = frame.method === "vault.code" ? "Código de verificación" : frame.method === "vault.unlock_prompt" ? "Desbloqueo del gestor de contraseñas" : frame.method === "vault.save_login" ? "Guardar acceso en Vault" : "Dato protegido";
+    return h("div", { className: "hb-secure-request" }, h("strong", null, `Flujo seguro pendiente · ${label}`), h("p", null, "Por seguridad, este dato no se solicita ni se almacena en el chat móvil. Completa el aviso seguro de Hermes Desktop o Vault; después el bot continuará en esta misma sesión."), params.site || params.origin || params.display_name ? h("small", null, params.site || params.origin || params.display_name) : null);
+  }
+
+  function ConnectionCard({ operation, profile, rpc, onDone }) {
+    const targets = Array.isArray(operation.targets) ? operation.targets : [];
+    const [selected, setSelected] = useState(() => Object.fromEntries(targets.map((target) => [target.name, false])));
+    const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+    const owner = operation.owner || { type: "session", session_id: operation.session_id };
+    const choose = (name, value) => setSelected((current) => ({ ...current, [name]: value }));
+    const respond = async (settledBy = "continue") => {
+      if (!owner?.type || !operation.op_id) { setError("La solicitud de acceso no tiene un propietario válido."); return; }
+      setBusy(true); setError("");
+      try {
+        const result = await rpc.request("connection.respond", { profile, owner, op_id: operation.op_id, result: { targets: targets.map((target) => ({ name: target.name, status: selected[target.name] ? "approved" : "skipped" })), settled_by: settledBy } });
+        onDone(operation.op_id, result);
+      } catch (e) { setError(errText(e)); } finally { setBusy(false); }
+    };
+    const deadline = operation.deadline_at ? new Date(Number(operation.deadline_at) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+    const scope = owner?.type === "account" ? "Alcance de la cuenta de Hermes; no se presenta como una cuenta privada de este bot." : owner?.type === "session" ? "Alcance de esta sesión y perfil." : "Esperando que Hermes confirme el alcance de la operación.";
+    return h("div", { className: "hb-connection" }, h("strong", null, "Solicitud de acceso"), h("p", null, "El bot necesita autorización para conectar una cuenta o capacidad. Revisa cada destino antes de continuar."), h("small", { className: "hb-connection-scope" }, scope), targets.map((target) => h("div", { className: "hb-connection-target", key: target.name }, h("div", { className: "hb-connection-copy" }, h("strong", null, target.display || target.name), h("span", null, target.description || target.detail || `${target.action || "connect"} · ${target.state || "pending"}`), target.required_env?.length ? h("small", null, "Este destino requiere configuración segura; no pegues credenciales en el chat.") : null, target.connect_url ? h("a", { className: "hb-connection-link", href: target.connect_url, target: "_blank", rel: "noopener noreferrer" }, "Abrir autorización") : null), h("div", { className: "hb-row-actions" }, h("button", { className: `hb-choice ${selected[target.name] ? "selected" : ""}`, type: "button", onClick: () => choose(target.name, true) }, "Permitir"), h("button", { className: `hb-choice ${selected[target.name] === false ? "selected" : ""}`, type: "button", onClick: () => choose(target.name, false) }, "Omitir")))), error ? h("div", { className: "hb-voice-error" }, error) : null, h("div", { className: "hb-row-actions" }, button("Continuar", () => respond("continue"), "primary", busy || !owner), button("Cancelar acceso", () => respond("interrupt"), "ghost", busy || !owner)), deadline ? h("small", { className: "hb-connection-deadline" }, `Válido hasta ${deadline}`) : null);
+  }
+
+  function TurboControls({ profile, accountInfo }) {
+    const [turbo, setTurbo] = useState(() => loadTurboState(profile)); const [grantLedger, setGrantLedger] = useState(() => loadTurboState(profile).grants || []); const [grantOpen, setGrantOpen] = useState(false); const [saveError, setSaveError] = useState("");
+    useEffect(() => { const local = loadTurboState(profile); setTurbo(local); setGrantLedger(local.grants || []); fetchJSON(`/api/plugins/${PLUGIN}/turbo/${encodeURIComponent(profile)}`).then((remote) => { if (remote?.mode && TURBO_MODES.includes(remote.mode)) { const merged = { ...local, ...remote, profile }; setTurbo(merged); setGrantLedger(merged.grants || []); persistTurboState(profile, merged); } }).catch(() => {}); }, [profile]);
+    const save = (next) => { const durable = (next.grants || []).filter((grant) => grant.persistent || grant.status === "revoked"); setTurbo(next); setGrantLedger(next.grants || []); persistTurboState(profile, { ...next, grants: durable }); fetchJSON(`/api/plugins/${PLUGIN}/turbo/${encodeURIComponent(profile)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: next.mode, grants: durable }) }).catch((error) => setSaveError(errText(error))); };
+    const setMode = (mode) => { if (!TURBO_MODES.includes(mode)) return; save({ ...turbo, mode, updatedAt: Date.now(), audit: [...(turbo.audit || []), { event: "mode.changed", mode, at: Date.now() }] }); };
+    const addGrant = (persistent) => { const service = "navegador"; const account = redactedAccount(accountInfo?.account || "cuenta abierta en este perfil"); const grant = { service, account, capabilities: ["read", "prepare", ...(persistent ? ["write"] : [])], persistent, status: "active", grantedAt: Date.now() }; const grants = [...grantLedger.filter((item) => !(item.service === service && item.account === account)), grant]; save({ ...turbo, grants }); setGrantOpen(false); };
+    const revoke = (grant) => { const grants = grantLedger.map((item) => item === grant ? { ...item, status: "revoked", capabilities: [] } : item); save({ ...turbo, grants }); };
+    const modeHelp = turbo.mode === "planning" ? "Descompone la tarea y no escribe fuera de Hermes." : turbo.mode === "simulation" ? "Lee y prepara borradores en el escritorio propio; no confirma." : "Usa grants persistentes y pide solo excepciones de alto riesgo.";
+    const providerState = accountInfo?.provider_consent ? "Activo" : "No verificado"; const hermesState = accountInfo?.hermes_enabled ? "Activo" : "No verificado"; const browserState = accountInfo?.browser_open ? "Abierto" : "No verificado"; const accountState = accountInfo?.account_active ? "Activa" : "No verificado";
+    return h("section", { className: "hb-turbo-controls", "aria-label": "Modos y autorizaciones Turbo" }, h("div", { className: "hb-turbo-header" }, h("div", null, h("span", { className: "hb-kicker" }, "POLÍTICA DEL BOT"), h("strong", null, "Turbo")), h("span", { className: `hb-mode-badge hb-mode-${turbo.mode}` }, TURBO_LABELS[turbo.mode])), h("label", { className: "hb-field hb-mode-field" }, "Modo actual", h("select", { className: "hb-select", value: turbo.mode, onChange: (event) => setMode(event.target.value) }, h("option", { value: "planning" }, "Planificación Turbo"), h("option", { value: "simulation" }, "Simulación Turbo"), h("option", { value: "autonomous" }, "Turbo Autónomo"))), h("p", { className: "hb-turbo-help" }, modeHelp), h("div", { className: "hb-account-status" }, h("strong", null, "Cuenta y navegador del perfil"), [["Navegador propio", browserState], ["Consentimiento del proveedor", providerState], ["Hermes habilitado", hermesState], ["Cuenta activa", accountState], ["Acción ejecutada", "No verificado"]].map(([label, value]) => h("span", { key: label }, h("small", null, label), h("b", null, value)))), h("div", { className: "hb-grant-summary" }, h("div", null, h("strong", null, "Autorizaciones persistentes"), h("small", null, grantLedger.filter((item) => item.status === "active").length ? "Se reutilizan para tareas rutinarias de este bot." : "Todavía no hay grants para este bot.")), h("button", { className: "hb-btn ghost", type: "button", onClick: () => setGrantOpen((value) => !value) }, grantOpen ? "Cerrar" : "Autorizar")), grantOpen ? h("div", { className: "hb-grant-card" }, h("strong", null, "¿Qué querés autorizar?"), h("p", null, "La cuenta queda ligada a este perfil. No se guardan contraseñas, tokens ni códigos en el chat."), h("div", { className: "hb-row-actions" }, button("Permitir una vez", () => addGrant(false), "ghost"), button("Habilitar siempre para este bot", () => addGrant(true), "primary"), button("Cancelar", () => setGrantOpen(false), "ghost"))) : null, grantLedger.filter((item) => item.status === "active").map((grant) => h("div", { className: "hb-grant-row", key: `${grant.service}-${grant.account}` }, h("span", null, `${grant.service} · ${grant.account}`), h("small", null, grant.persistent ? "Siempre para este bot" : "Una vez"), button("Revocar", () => revoke(grant), "ghost"))), saveError ? h("small", { className: "hb-voice-error" }, saveError) : null);
+  }
+
+  function AttachmentTray({ attachments, onRemove }) {
+    if (!attachments.length) return null;
+    return h("div", { className: "hb-attachment-tray", "aria-label": "Adjuntos preparados" }, attachments.map((attachment) => h("div", { className: "hb-attachment", key: attachment.id }, attachment.preview ? h("img", { src: attachment.preview, alt: "", loading: "lazy" }) : h("span", { className: `hb-attachment-kind ${attachment.kind}` }, attachment.kind === "document" ? "DOC" : attachment.kind.toUpperCase()), h("span", { className: "hb-attachment-copy" }, h("strong", null, attachment.name), h("small", null, `${Math.ceil(attachment.size / 1024)} KB · ${attachment.status === "ready" ? "Listo" : attachment.status}`)), button("Quitar", () => onRemove(attachment.id), "ghost"))));
+  }
+
+  function ChatView({ bot, storedId }) {
+    const draftStorageKey = `hermes-bots-console.draft.${bot.name}`;
+    const [core, setCore] = useState(null); const [state, setState] = useState({ messages: [], connected: false, busy: false, error: "", status: "" }); const [approvals, setApprovals] = useState([]); const [secureRequests, setSecureRequests] = useState([]); const [notices, setNotices] = useState([]); const [connections, setConnections] = useState([]); const [screen, setScreen] = useState(false); const rpcRef = useRef(null); const composerRef = useRef(null); const recorderRef = useRef(null); const audioChunksRef = useRef([]); const [draft, setDraft] = useState(() => { try { return window.sessionStorage.getItem(draftStorageKey) || ""; } catch (_) { return ""; } }); const [attachments, setAttachments] = useState([]); const [attachmentError, setAttachmentError] = useState(""); const fileInputRef = useRef(null); const cameraInputRef = useRef(null); const [voiceState, setVoiceState] = useState("idle"); const [voiceError, setVoiceError] = useState(""); const [notificationState, setNotificationState] = useState(() => typeof window !== "undefined" && "Notification" in window ? Notification.permission : "unsupported"); const [localStalled, setLocalStalled] = useState(false); const [continuing, setContinuing] = useState(false); const isDirector = Boolean(bot.is_default || /arquitect|architect|chief|director/i.test(`${bot.name || ""} ${profileLabel(bot)}`));
+    useEffect(() => {
+      let alive = true; const rpc = new RpcClient(bot.name); rpcRef.current = rpc;
+      let chat;
+      const start = async () => {
+        try {
+          const [{ ChatSession }, interaction] = await Promise.all([import(`${ASSET}/chat-core-v023.mjs`), import(`${ASSET}/${INTERACTION_CORE}`)]); if (!interaction?.normalizeAttachment) throw new Error("Pipeline de adjuntos no disponible");
+          if (!alive) return;
+          chat = new ChatSession({ rpc, fetchJSON, profile: bot.name, routeMessage: (context) => fetchJSON(`/api/plugins/${PLUGIN}/route`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profile: bot.name, ...context }) }), onChange: (next) => { if (alive) { setState(next); if (Array.isArray(next.openRequests)) { const requests = next.openRequests.map((request) => ({ id: request.id, method: request.method, params: request.params || {} })); setApprovals(requests.filter((request) => request.method === "approval" || request.method === "clarify")); setSecureRequests(requests.filter((request) => SECURE_REQUEST_METHODS.has(request.method))); } if (next.pendingConnection) setConnections((old) => [...old.filter((item) => item.op_id !== next.pendingConnection.op_id), { ...next.pendingConnection, session_id: next.runtimeId, owner: { type: "session", session_id: next.runtimeId } }]); if (next.storedId) { try { localStorage.setItem(`hermes-bots-console.session.${bot.name}`, next.storedId); } catch (_) {} } if (next.storedId && !new URLSearchParams(window.location.search).get("session")) navigate({ view: "chat", profile: bot.name, session: next.storedId }, true); } } });
+          setCore(chat);
+          let candidate = storedId;
+          if (!candidate) { try { candidate = localStorage.getItem(`hermes-bots-console.session.${bot.name}`) || ""; } catch (_) {} }
+          if (!candidate) { try { const recent = await fetchJSON(`/api/sessions?limit=1&order=recent&min_messages=1&profile=${encodeURIComponent(bot.name)}`); candidate = recent?.sessions?.[0]?.id || ""; } catch (_) {} }
+          let createdFallback = false;
+          try { await chat.open(candidate); } catch (resumeError) { if (!candidate) throw resumeError; try { localStorage.removeItem(`hermes-bots-console.session.${bot.name}`); } catch (_) {} createdFallback = true; await chat.open(); }
+          if (createdFallback && chat.state.storedId) navigate({ view: "chat", profile: bot.name, session: chat.state.storedId }, true);
+          if (alive) composerRef.current?.focus();
+        } catch (e) { if (alive) setState((s) => ({ ...s, error: errText(e), connected: false })); }
+      };
+      const offEvent = rpc.on("event", (event) => {
+        if (!alive) return;
+        if (event.type === "notification.show") {
+          const payload = event.payload || {}; const key = payload.key || payload.id || `notice-${Date.now()}`;
+          setNotices((old) => [...old.filter((item) => item.key !== key), { ...event, key }].slice(-4));
+          if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") new Notification("Nuevo aviso de Hermes", { body: "Hay un aviso disponible en la conversación.", tag: `hermes-notice-${key}` });
+          return;
+        }
+        if (event.type === "notification.clear") { const key = event.payload?.key; if (key) setNotices((old) => old.filter((item) => item.key !== key)); return; }
+        if (event.type === "request.cancel") { const id = event.payload?.id; if (id) { setApprovals((old) => old.filter((item) => item.id !== id)); setSecureRequests((old) => old.filter((item) => item.id !== id)); } return; }
+        if (event.type !== "connection.request" && event.type !== "connection.update") return;
+        if (chat?.state?.runtimeId && event.session_id && event.session_id !== chat.state.runtimeId) return;
+        const payload = event.payload || {}; const owner = payload.owner || ((event.session_id || chat?.state?.runtimeId) ? { type: "session", session_id: event.session_id || chat?.state?.runtimeId } : null);
+        if (event.type === "connection.request") {
+          const operation = { ...payload, session_id: event.session_id || chat?.state?.runtimeId, owner };
+          setConnections((old) => [...old.filter((item) => item.op_id !== operation.op_id), operation]);
+          if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") { const names = (operation.targets || []).map((target) => target.display || target.name).filter(Boolean).join(", "); new Notification("Autorización requerida", { body: names ? `El bot solicita acceso a ${names}.` : "El bot necesita tu decisión.", tag: `hermes-connection-${operation.op_id}` }); }
+        } else {
+          if (payload.settled) setConnections((old) => old.filter((item) => item.op_id !== payload.op_id));
+          else setConnections((old) => { const current = old.find((item) => item.op_id === payload.op_id); if (current && Number(current.seq || 0) >= Number(payload.seq || 0)) return old; return [...old.filter((item) => item.op_id !== payload.op_id), { ...payload, session_id: event.session_id || chat?.state?.runtimeId, owner }]; });
+        }
+      });
+      const offRequest = rpc.on("server-request", (frame) => {
+        if (frame.method === "approval" || frame.method === "clarify") {
+          setApprovals((old) => [...old.filter((x) => x.id !== frame.id), frame]);
+          if (frame.method === "approval" && typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") { const params = frame.params || {}; new Notification("Hermes necesita tu aprobación", { body: params.description || params.command || "Acción protegida", tag: `hermes-approval-${frame.id}` }); }
+        } else if (SECURE_REQUEST_METHODS.has(frame.method)) {
+          setSecureRequests((old) => [...old.filter((x) => x.id !== frame.id), frame]);
+          if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") new Notification("Flujo seguro pendiente", { body: "Completa el aviso seguro de Hermes Desktop o Vault.", tag: `hermes-secure-${frame.id}` });
+        }
+      });
+      start(); return () => { alive = false; try { recorderRef.current?.stop(); } catch (_) {} offEvent(); offRequest(); chat?.close(); rpc.close(); rpcRef.current = null; setCore(null); };
+    }, [bot.name, storedId]);
+    useEffect(() => {
+      try {
+        if (draft) window.sessionStorage.setItem(draftStorageKey, draft);
+        else window.sessionStorage.removeItem(draftStorageKey);
+      } catch (_) {}
+    }, [draft, draftStorageKey]);
+    useEffect(() => {
+      if (!state.busy) { setLocalStalled(false); return undefined; }
+      setLocalStalled(false);
+      const startedAt = state.lastActivityAt || Date.now();
+      const wait = Math.max(0, 45000 - (Date.now() - startedAt));
+      const timer = window.setTimeout(() => setLocalStalled(true), wait);
+      return () => window.clearTimeout(timer);
+    }, [state.busy, state.lastActivityAt]);
+    const addFiles = useCallback((fileList, source = "file") => {
+      const files = [...(fileList || [])]; if (!files.length) return;
+      const next = []; let error = "";
+      for (const file of files) { try { next.push(normalizeBrowserAttachment(file, source)); } catch (problem) { error = errText(problem); } }
+      if (next.length) setAttachments((current) => [...current, ...next].slice(-12));
+      setAttachmentError(error);
+    }, []);
+    const removeAttachment = useCallback((id) => setAttachments((current) => { const item = current.find((attachment) => attachment.id === id); if (item?.preview) URL.revokeObjectURL(item.preview); return current.filter((attachment) => attachment.id !== id); }), []);
+    const handleDrop = useCallback((event) => { event.preventDefault(); event.stopPropagation(); addFiles(event.dataTransfer?.files, "drop"); }, [addFiles]);
+    const handlePaste = useCallback((event) => { const files = [...(event.clipboardData?.files || [])]; if (files.length) { event.preventDefault(); addFiles(files, "paste"); } }, [addFiles]);
+    const openAttachmentPicker = useCallback(async () => {
+      try {
+        if (navigator.clipboard?.read) { const items = await navigator.clipboard.read(); const pasted = []; for (const item of items) for (const type of item.types || []) if (type.startsWith("image/")) pasted.push(await item.getType(type)); if (pasted.length) { addFiles(pasted, "clipboard"); return; } }
+      } catch (_) {}
+      fileInputRef.current?.click();
+    }, [addFiles]);
+    const handleComposerKeyDown = useCallback((event) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b") { event.preventDefault(); openAttachmentPicker(); } }, [openAttachmentPicker]);
+    const uploadAttachments = useCallback(async () => Promise.all(attachments.map(async (attachment) => { if (!attachment.file) return attachment; const form = new FormData(); form.append("file", attachment.file, attachment.name); const response = await window.fetch(`${BASE}/api/plugins/${PLUGIN}/attachments?profile=${encodeURIComponent(bot.name)}`, { method: "POST", body: form, credentials: "same-origin" }); if (!response.ok) throw new Error(`No se pudo adjuntar (${response.status}).`); const uploaded = await response.json(); return { ...attachment, ...uploaded }; })), [attachments, bot.name]);
+    const send = useCallback(async () => { const text = draft.trim() || (attachments.length ? "Revisá los adjuntos que te envío." : ""); if (!text || !core || !state.connected) return; setAttachmentError(""); try { const uploaded = await uploadAttachments(); const payload = attachmentPayload(uploaded); setDraft(""); await core.submit(text, payload); attachments.forEach((attachment) => { if (attachment.preview) URL.revokeObjectURL(attachment.preview); }); setAttachments([]); } catch (error) { setAttachmentError(errText(error)); } }, [attachments, core, draft, state.connected, uploadAttachments]);
+    const quickPrompt = useCallback(async (text) => { if (!core || !state.connected) return; try { await core.submit(text); } catch (_) {} }, [core, state.connected]);
+    const continueRun = useCallback(async () => { if (!core || continuing) return; setContinuing(true); setLocalStalled(false); try { await core.continueRun(); } finally { setContinuing(false); } }, [core, continuing]);
+    const enableNotifications = useCallback(async () => { if (!(typeof window !== "undefined" && "Notification" in window)) { setNotificationState("unsupported"); return; } if (Notification.permission === "denied") { setNotificationState("denied"); return; } const permission = await Notification.requestPermission(); setNotificationState(permission); }, []);
+    const stopVoice = useCallback(() => { const recorder = recorderRef.current; if (recorder && recorder.state === "recording") recorder.stop(); }, []);
+    const recordVoice = useCallback(async () => {
+      if (voiceState === "recording") { stopVoice(); return; }
+      if (!core || voiceState === "transcribing") return;
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") { setVoiceError("Este navegador no permite grabar audio aquí."); return; }
+      setVoiceError("");
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
+        const mime = candidates.find((value) => typeof MediaRecorder.isTypeSupported !== "function" || MediaRecorder.isTypeSupported(value)) || "";
+        const recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+        audioChunksRef.current = []; recorderRef.current = recorder;
+        recorder.ondataavailable = (event) => { if (event.data?.size) audioChunksRef.current.push(event.data); };
+        recorder.onerror = () => { stream.getTracks().forEach((track) => track.stop()); recorderRef.current = null; setVoiceState("idle"); setVoiceError("La grabación de audio falló."); };
+        recorder.onstop = async () => {
+          stream.getTracks().forEach((track) => track.stop()); recorderRef.current = null; setVoiceState("transcribing");
+          try {
+            const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || mime || "audio/webm" });
+            const dataUrl = await blobToDataUrl(blob);
+            const result = await fetchJSON(`/api/audio/transcribe?profile=${encodeURIComponent(bot.name)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data_url: dataUrl, mime_type: blob.type || "audio/webm" }) });
+            const transcript = String(result?.transcript || "").trim();
+            if (!transcript) throw new Error("No se detectó voz en la grabación.");
+            setVoiceState("idle"); await core.submit(transcript);
+          } catch (error) { setVoiceState("idle"); setVoiceError(errText(error)); }
+        };
+        recorder.start(); setVoiceState("recording");
+      } catch (error) { setVoiceState("idle"); setVoiceError(error?.name === "NotAllowedError" ? "Permiso de micrófono denegado. Habilítalo para este sitio." : errText(error)); }
+    }, [bot.name, core, fetchJSON, state.busy, stopVoice, voiceState]);
+    const reconnect = async () => { if (!core) return; try { await core.open(state.storedId || storedId); } catch (e) { setState((s) => ({ ...s, error: errText(e), connected: false, recoverable: true, recoveryReason: "connection", status: "La conexión se detuvo…" })); } };
+    const respond = (id, result) => { rpcRef.current?.respond(id, result); setApprovals((old) => old.filter((x) => x.id !== id)); };
+    const clearRequest = (id) => setApprovals((old) => old.filter((x) => x.id !== id));
+    const connectionDone = (opId, result) => { if (result?.settled) setConnections((old) => old.filter((item) => item.op_id !== opId)); else setConnections((old) => old.map((item) => item.op_id === opId ? { ...item, status: "initiated" } : item)); };
+    return h("div", { className: "hb-chat-layout" }, h("header", { className: "hb-chat-header" }, button("‹", () => navigate({ view: "roster" }), "icon ghost"), h("div", { className: "hb-chat-identity" }, h(BotCharacter, { bot, size: "small", working: state.busy }), h("div", null, h("strong", null, profileLabel(bot)), h("span", null, state.connected ? (state.busy ? state.status || "Trabajando…" : "En línea") : "Desconectado"))), h("div", { className: "hb-chat-actions" }, iconButton("Abrir monitor", monitorIcon(), () => setScreen(true)), notificationState === "granted" ? iconButton("Avisos activos", bellIcon(), () => {}, "notification-icon") : notificationState === "unsupported" ? null : iconButton(notificationState === "denied" ? "Avisos bloqueados" : "Activar avisos", bellIcon(), enableNotifications, "notification-icon", notificationState === "denied"), button("⋯", () => window.location.assign(`${BASE}/chat?profile=${encodeURIComponent(bot.name)}`), "icon ghost"))), h("main", { className: "hb-chat-main" }, h("div", { className: "hb-chat-context" }, h("span", { className: "hb-kicker" }, "CONVERSACIÓN PRIVADA"), h("p", null, bot.description || "Este chat conserva el perfil y la memoria de este bot."), h(TurboControls, { profile: bot.name, accountInfo: state.info }), isDirector && !state.busy ? h(DirectorQuickActions, { onSelect: quickPrompt }) : null), h("div", { className: "hb-messages", "aria-live": "polite" }, state.messages.length ? state.messages.map((m, i) => h(MessageBubble, { message: m, key: `${m.role}-${m.toolId || i}` })) : h("div", { className: "hb-chat-empty" }, h(BotCharacter, { bot, size: "empty", working: state.busy }), h("h2", null, `¿Qué hacemos, ${profileLabel(bot)}?`), h("p", null, "Escribe una instrucción para comenzar. Este chat usa el Gateway y se reanuda después de recargar.")), (state.busy || state.recoverable || localStalled) ? h(WorkingIndicator, { text: state.status || "Pensando…", recoverable: state.recoverable, stalled: localStalled || state.stalled, onContinue: continueRun, continuing }) : null, notices.map((notice) => h(NoticeCard, { notice, key: `notice-${notice.key}` })), approvals.map((frame) => frame.method === "clarify" ? h(ClarifyCard, { frame, profile: bot.name, rpc: rpcRef.current, key: frame.id, onResolved: clearRequest }) : h(ApprovalCard, { frame, key: frame.id, onRespond: respond })), connections.map((operation) => h(ConnectionCard, { operation, profile: bot.name, rpc: rpcRef.current, key: `connection-${operation.op_id}`, onDone: connectionDone })), secureRequests.map((frame) => h(SecureRequestNotice, { frame, key: `secure-${frame.id}` })), null), h("div", { className: "hb-composer-wrap", onDrop: handleDrop, onDragOver: (event) => event.preventDefault(), onPaste: handlePaste }, h("input", { ref: fileInputRef, type: "file", accept: "image/*,audio/*,video/*,.md,.markdown,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt", multiple: true, hidden: true, onChange: (event) => { addFiles(event.target.files, "file"); event.target.value = ""; } }), h("input", { ref: cameraInputRef, type: "file", accept: "image/*", capture: "environment", hidden: true, onChange: (event) => { addFiles(event.target.files, "camera"); event.target.value = ""; } }), h(AttachmentTray, { attachments, onRemove: removeAttachment }), h("textarea", { ref: composerRef, className: "hb-composer", value: draft, rows: 1, placeholder: state.busy ? "Escribí lo que necesites; Hermes ordena el mensaje…" : `Mensaje para ${profileLabel(bot)}…`, "aria-label": "Escribir mensaje", onChange: (e) => setDraft(e.target.value), onPaste: handlePaste, onKeyDown: (e) => { handleComposerKeyDown(e); if (!e.defaultPrevented && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } } }), h("div", { className: `hb-composer-bar ${state.busy ? "busy" : ""}` }, h("div", { className: "hb-attachment-actions" }, button("+ Adjuntar", openAttachmentPicker, "ghost"), button("Cámara", () => cameraInputRef.current?.click(), "ghost")), h("span", { className: "hb-compose-hint" }, state.busy ? "Hermes decide si ajusta el trabajo o lo deja como siguiente tarea." : "Enter enviar · Shift+Enter nueva línea"), voiceState === "recording" ? iconButton("Detener audio", stopIcon(), recordVoice, "voice-recording") : iconButton(voiceState === "transcribing" ? "Transcribiendo…" : "Grabar audio", microphoneIcon(), recordVoice, "voice-button", !state.connected || voiceState === "transcribing"), !state.connected ? button("Reconectar", reconnect, "ghost") : null, button("Enviar", send, "primary send-button", (!draft.trim() && !attachments.length) || !state.connected)), attachmentError ? h("div", { className: "hb-voice-error" }, attachmentError) : null, voiceError ? h("div", { className: "hb-voice-error" }, voiceError) : null, h("div", { className: "hb-chat-note" }, "Perfil explícito: ", bot.name, " · Terminal avanzado disponible desde ⋯"))), screen ? h("div", { className: "hb-screen-overlay mobile-screen" }, h(ScreenPanel, { bot, onClose: () => setScreen(false) })) : null);
+  }
+
+  function BotsPage() {
+    const [route, setRoute] = useState(routeFromLocation()); const [bots, setBots] = useState([]); const [loading, setLoading] = useState(true); const [error, setError] = useState(""); const [sheet, setSheet] = useState(null); const [screenBot, setScreenBot] = useState(null);
+    const refresh = useCallback(async () => { setLoading(true); setError(""); try { const result = await api.getProfiles(); setBots(result.profiles || []); } catch (e) { setError(errText(e)); } finally { setLoading(false); } }, []);
+    useEffect(() => { const onPop = () => { setRoute(routeFromLocation()); setScreenBot(null); }; window.addEventListener("popstate", onPop); refresh(); return () => window.removeEventListener("popstate", onPop); }, [refresh]);
+    useEffect(() => {
+      let alive = true; let checking = false;
+      const checkForUpdate = async () => {
+        if (checking) return;
+        checking = true;
+        try {
+          const response = await window.fetch(`${ASSET}/manifest.json?hb=${Date.now()}`, { cache: "no-store", credentials: "same-origin" });
+          if (!response.ok) return;
+          const manifest = await response.json();
+          const changed = manifest.version !== CURRENT_RELEASE || manifest.entry !== CURRENT_ENTRY || manifest.css !== CURRENT_CSS;
+          if (alive && changed) {
+            await window.fetch(`${BASE}/api/dashboard/plugins/rescan?hb=${Date.now()}`, { cache: "no-store", credentials: "same-origin" }).catch(() => {});
+            if (alive) window.location.reload();
+          }
+        } catch (_) {
+          // A temporary manifest check failure must not interrupt the current chat.
+        } finally { checking = false; }
+      };
+      const timer = window.setInterval(checkForUpdate, 15000);
+      window.addEventListener("focus", checkForUpdate);
+      return () => { alive = false; window.clearInterval(timer); window.removeEventListener("focus", checkForUpdate); };
+    }, []);
+    const bot = bots.find((b) => b.name === route.profile) || bots.find((b) => b.is_default) || bots[0];
+    const content = route.view === "chat" && bot ? h(ChatView, { bot, storedId: route.session }) : route.view === "group" ? h(GroupRoomView, { bots, groupId: route.group }) : route.view === "groups" ? h(GroupsView, { bots }) : h(RosterView, { bots, loading, error, onRefresh: refresh, onCreate: () => setSheet({ type: "create" }), onSettings: (b) => setSheet({ type: "settings", bot: b }), onScreen: setScreenBot, onEdit: (b) => setSheet({ type: "edit", bot: b }) });
+    return h("div", { className: "hb-root" }, content, screenBot && route.view !== "chat" ? h("div", { className: "hb-screen-overlay mobile-screen" }, h(ScreenPanel, { bot: screenBot, onClose: () => setScreenBot(null) })) : null, sheet?.type === "create" ? h(CreateBotSheet, { onClose: () => setSheet(null), onCreated: refresh }) : null, sheet?.type === "settings" ? h(SettingsSheet, { bot: sheet.bot, onClose: () => setSheet(null), onSaved: async () => { await refresh(); setSheet(null); } }) : null, sheet?.type === "edit" ? h(CreateBotSheet, { onClose: () => setSheet(null), onCreated: refresh }) : null);
+  }
+
+  window.__HERMES_PLUGINS__.register(PLUGIN, BotsPage);
+  if (typeof window.__HERMES_PLUGINS__.registerSlot === "function") window.__HERMES_PLUGINS__.registerSlot(PLUGIN, "chat:top", ({}) => null);
+})();

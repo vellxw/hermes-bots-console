@@ -1,0 +1,17 @@
+{
+  "name": "hermes-bots-console",
+  "version": "0.5.0-rc.1",
+  "private": false,
+  "description": "Hermes Dashboard plugin for bot roster, chat, groups and profile-scoped automation",
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "pack": "node scripts/package.mjs",
+    "verify": "node scripts/verify.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:python": "python -m pytest -q",
+    "test:all": "npm run verify && npm run build && npm test && npm run test:python"
+  },
+  "license": "MIT"
+}
