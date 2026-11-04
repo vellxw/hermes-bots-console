@@ -36,6 +36,8 @@ test('pack creates a deterministic public release archive without catalog metada
   assert.ok(names.includes('hermes-bots-console-0.5.0-rc.1/plugin.json'));
   assert.ok(names.includes('hermes-bots-console-0.5.0-rc.1/dashboard/manifest.json'));
   assert.ok(!names.some((name) => name.includes('catalog-entry.yaml')));
+  assert.ok(names.includes('hermes-bots-console-0.5.0-rc.1/dashboard/chat-core-v023.mjs'));
+  assert.ok(!names.some((name) => /dashboard\/(?:index|style)-v0(?:12|13|14)\./.test(name)));
   const privateMarker = ['/','home','franco'].join('');
   assert.ok(!names.some((name) => name.includes(privateMarker)));
 });

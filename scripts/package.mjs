@@ -15,11 +15,21 @@ const archivePath = join(dist, `${archiveRoot}.tar.gz`);
 execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: project, stdio: 'inherit' });
 execFileSync(process.execPath, ['scripts/verify.mjs'], { cwd: project, stdio: 'inherit' });
 
+const manifest = JSON.parse(await readFile(join(project, 'dashboard/manifest.json'), 'utf8'));
+const activeAssetNames = new Set([
+  manifest.entry, manifest.css, manifest.interaction_core,
+  manifest.contracts, manifest.browser_flow,
+  // ChatView loads this separately; it is not named in the manifest.
+  'chat-core-v023.mjs',
+]);
 const excluded = (name) => name === 'catalog-entry.yaml'
   || name.startsWith('backups/')
   || name.startsWith('reports/')
   || name.startsWith('dist/')
-  || name.startsWith('.git/');
+  || name.startsWith('.git/')
+  // Keep sources and active versioned bundles, but not historical bundle copies.
+  || (/^dashboard\/(?:index|style|chat-core|interaction-core|contracts|browser-flow)-v\d+\.(?:js|css|mjs)$/.test(name)
+      && !activeAssetNames.has(name.slice('dashboard/'.length)));
 const tracked = execFileSync('git', ['ls-files', '--cached'], { cwd: project, encoding: 'utf8' })
   .split('\n')
   .map((value) => value.trim())

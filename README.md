@@ -1,6 +1,10 @@
 # Hermes Bot Command
 
-> Mobile-first Bot roster, per-bot models, native groups, skills and live Bot Screens for the [Hermes](https://github.com/NousResearch/hermes-agent) Dashboard.
+**Your AI agents. One command center.**
+
+Supervise multiple [Hermes](https://github.com/NousResearch/hermes-agent) agents from one Dashboard tab, switch between their chats, observe a bot's isolated desktop, and take control from your phone or computer when needed. Each bot keeps its own profile, tools, and permissions.
+
+> **Status: experimental release candidate (0.5.0-rc.1).** The public CI checks portable contracts and packaging; it does not certify a fresh Hermes install or an authenticated live desktop viewer. The isolated Bot Screen requires a Linux gateway with the appropriate Hermes desktop dependencies.
 
 [![CI](https://github.com/vellxw/hermes-bots-console/actions/workflows/ci.yml/badge.svg)](https://github.com/vellxw/hermes-bots-console/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/vellxw/hermes-bots-console?include_prereleases)](https://github.com/vellxw/hermes-bots-console/releases)
@@ -23,11 +27,11 @@ Hermes Bot Command adds a **Bots** tab to the Hermes Dashboard. It gives you:
 - **Mobile-first** — full touch support, fullscreen viewer, single-column layout
 - **Desktop 3-pane workspace** — rail + chat + inspector from 1180px up
 
-### Screenshots
+### Product illustration (not an authenticated screenshot)
 
-![Desktop workspace](docs/demo.svg)
+![Concept illustration of the Desktop workspace](docs/demo.svg)
 
-*Desktop 3-pane workspace with live Bot Screen in the inspector (animated).*
+*Animated SVG illustration of the intended three-pane workspace. This is **not** a screen recording, live test, or proof of the viewer's integration with Hermes. Real authenticated demos are still required before claiming visual certification.*
 
 | Mobile (390px) | Desktop (1180px+) |
 |---|---|
@@ -36,9 +40,11 @@ Hermes Bot Command adds a **Bots** tab to the Hermes Dashboard. It gives you:
 | Touch: 1 finger = mouse, 2 fingers = pan/zoom | Click preview = view only |
 | "Tomar control" → auto-lease | "Tomar control" → expand + auto-lease |
 
-### Animated demo
+### Guided first test
 
-The SVG above is animated: the typing indicator pulses, the cursor blinks, and the screen content updates in real time. Open `docs/demo.svg` in a browser to see the full animation.
+After installing Hermes, install the plugin and open the authenticated Dashboard. Start with one profile and a harmless chat message; this validates the basic path before attempting any desktop control. Then check whether your Linux gateway exposes the `display.status` and `display.observe` capabilities before opening the viewer.
+
+**Native group caveat:** Hermes hosted rooms persist their membership. Editing the locally stored group configuration does not automatically change an already-created native room. Until an upstream public membership-update API is supported, keep group membership unchanged once its native room has been created; otherwise create a new group.
 
 ---
 
