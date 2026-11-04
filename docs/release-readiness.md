@@ -45,6 +45,6 @@ Keep `main` unchanged until the PR is reviewed. To revert a reviewed installatio
 - [ ] All CI jobs pass on Linux, macOS and Windows
 - [ ] Authenticated gateway tests complete
 - [ ] Screenshots and demo from real Hermes session
-- [ ] Version bump and correctly flagged GitHub prerelease
+- [ ] Version bump and correctly flagged GitHub prerelease (the unreleased branch uses cache-busted `index-v055.js`, while the public tag still points to `index-v054.js`)
 - [ ] Attach deterministic archive with SHA-256 matching the documented release
 - [ ] Configure a private vulnerability reporting channel and confirm it is reachable

@@ -2,6 +2,8 @@
 
 ## Unreleased — public launch hardening (draft PR)
 
+The dashboard's cache-busted entry advances to `index-v055.js` so existing client caches cannot silently reuse the prior bundle. Version and tagged release remain `0.5.0-rc.1` until a new reviewed prerelease is published.
+
 - Fix auxiliary routing so model timeouts and exceptions use local queue/steer fallback.
 - Make first-run diagnostics honest about what the backend can and cannot verify.
 - Remount group rooms by profile and room ID to avoid stale cross-room transcripts; restore draft after failed group sends.
