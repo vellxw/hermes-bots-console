@@ -7,7 +7,7 @@
 - Fail closed on membership changes to an existing native Hermes room (upstream currently exposes no public membership edit RPC), paginate `groups.list` using `next_offset`, and verify the actual room roster before sending messages.
 - Verify catalog integrity against its pinned release tag rather than unreleased development assets.
 - Restore portability of storage and test tooling across Linux, macOS and Windows.
-- Package only active versioned assets and their readable sources; correct catalog SRI metadata and remove an invalid artifact digest.
+- Package only active versioned assets and their readable sources, omit development-only tests/scripts from installation archives, and correct catalog SRI metadata and invalid artifact digest.
 - Clarify that the SVG demonstration is illustrative, not a validated authenticated recording.
 - Keep releases as candidates until real Hermes installation and desktop-viewer acceptance testing is performed.
 

@@ -27,6 +27,13 @@ const excluded = (name) => name === 'catalog-entry.yaml'
   || name.startsWith('reports/')
   || name.startsWith('dist/')
   || name.startsWith('.git/')
+  // User-facing install archives do not need development-only tooling.
+  || name.startsWith('.github/')
+  || name.startsWith('tests/')
+  || name.startsWith('scripts/')
+  || name.startsWith('launch/')
+  || name === '.gitignore'
+  || name === '.gitattributes'
   // Keep sources and active versioned bundles, but not historical bundle copies.
   || (/^dashboard\/(?:index|style|chat-core|interaction-core|contracts|browser-flow)-v\d+\.(?:js|css|mjs)$/.test(name)
       && !activeAssetNames.has(name.slice('dashboard/'.length)));
