@@ -19,7 +19,7 @@ export async function readNativeGroupLog(requestPage, {
         !isSequence(page.cursor) || !isSequence(page.latest_seq) ||
         typeof page.has_more !== "boolean" ||
         page.cursor < cursor || page.cursor > page.latest_seq ||
-        (page.has_more && page.cursor >= page.latest_seq)) {
+        page.has_more !== (page.cursor < page.latest_seq)) {
       throw new Error("Respuesta de paginación de grupos inválida.");
     }
     let previous = cursor;
