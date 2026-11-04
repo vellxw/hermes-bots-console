@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -20,7 +21,7 @@ function tarNames(buffer) {
 
 test('pack creates a deterministic public release archive without catalog metadata or private paths', async () => {
   const run = () => execFileSync(process.execPath, ['scripts/package.mjs'], {
-    cwd: new URL(project).pathname,
+    cwd: fileURLToPath(project),
     encoding: 'utf8',
   });
   const firstOutput = run();
