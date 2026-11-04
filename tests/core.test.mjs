@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readFile } from 'node:fs/promises';
-const coreUrl = new URL('../dashboard/chat-core.mjs', import.meta.url).href;
+const coreUrl = pathToFileURL(fileURLToPath(new URL('../dashboard/chat-core.mjs', import.meta.url))).href;
 const indexSource = readFile(new URL('../dashboard/index.js', import.meta.url), 'utf8');
 
 test('routes the Bot Screen gateway and RFB stream to the selected bot profile', async () => {
@@ -501,7 +501,7 @@ test('cache-busted release contains the automatic router and continue flow', asy
 });
 
 test('turbo policy keeps formal modes profile-scoped and blocks external writes in planning and simulation', async () => {
-  const core = await import(new URL('../dashboard/interaction-core.mjs', import.meta.url).href);
+  const core = await import(pathToFileURL(fileURLToPath(new URL('../dashboard/interaction-core.mjs', import.meta.url))).href);
   assert.deepEqual(core.TURBO_MODES, ['planning', 'simulation', 'autonomous']);
   assert.equal(core.modeLabel('planning'), 'Planificación Turbo');
   assert.equal(core.modeLabel('simulation'), 'Simulación Turbo');
@@ -519,7 +519,7 @@ test('turbo policy keeps formal modes profile-scoped and blocks external writes 
 });
 
 test('grant ledger supports once, persistent bot scope and revocation without secrets', async () => {
-  const core = await import(new URL('../dashboard/interaction-core.mjs', import.meta.url).href);
+  const core = await import(pathToFileURL(fileURLToPath(new URL('../dashboard/interaction-core.mjs', import.meta.url))).href);
   let ledger = core.createGrantLedger('default');
   ledger = core.grant(ledger, { service: 'gmail', account: 'demo@example.com', capabilities: ['read', 'draft'], persistent: true });
   assert.equal(core.isGranted(ledger, 'gmail', 'demo@example.com', 'read'), true);
@@ -533,7 +533,7 @@ test('grant ledger supports once, persistent bot scope and revocation without se
 });
 
 test('attachment pipeline validates MIME, size and safe message payloads', async () => {
-  const core = await import(new URL('../dashboard/interaction-core.mjs', import.meta.url).href);
+  const core = await import(pathToFileURL(fileURLToPath(new URL('../dashboard/interaction-core.mjs', import.meta.url))).href);
   const image = core.normalizeAttachment({ name: 'captura.PNG', type: 'image/png', size: 1200, source: 'paste' });
   assert.equal(image.kind, 'image');
   assert.equal(image.source, 'paste');
@@ -544,7 +544,7 @@ test('attachment pipeline validates MIME, size and safe message payloads', async
 });
 
 test('safe markdown parser exposes GFM blocks and never returns executable HTML', async () => {
-  const core = await import(new URL('../dashboard/interaction-core.mjs', import.meta.url).href);
+  const core = await import(pathToFileURL(fileURLToPath(new URL('../dashboard/interaction-core.mjs', import.meta.url))).href);
   const blocks = core.parseMarkdown('# Título\n\n**fuerte** y *cursiva*\n\n- uno\n- dos\n\n> cita\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```js\nalert(1)\n```\n\n<script>alert(2)</script>');
   assert.equal(blocks.some(block => block.type === 'heading'), true);
   assert.equal(blocks.some(block => block.type === 'list'), true);
