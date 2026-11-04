@@ -192,6 +192,7 @@ async def test_diagnostics_separates_required_storage_from_optional_viewer(monke
     assert checks["profile_storage"]["status"] == "ok"
     assert checks["plugin_backend"]["required"] is True
     assert checks["plugin_backend"]["status"] == "ok"
+    assert checks["plugin_backend"]["action"] == "hermes plugins doctor hermes-bots-console --ci"
     assert checks["hermes_runtime"]["required"] is False
     assert checks["hermes_runtime"]["status"] == "manual"
     assert checks["native_groups"]["status"] == "manual"

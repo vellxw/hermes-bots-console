@@ -19,12 +19,12 @@ CI is a cross-platform portability gate. The separate Chromium fixture job rende
 2. Live Bot Screen is Linux-gateway-only until additional gateway platforms have been validated. Mobile and desktop clients can connect to a suitable remote gateway.
 3. Audio transcription/synthesis requires a configured Hermes/provider adapter.
 4. The animated `docs/demo.svg` is a concept illustration, not an authenticated browser capture.
-5. A fresh plugin install, `hermes plugins validate`, `hermes doctor`, chat exchange and remote viewer control remain **manual acceptance gates**.
+5. A fresh plugin install, `hermes plugins validate /path/to/hermes-bots-console`, `hermes plugins doctor hermes-bots-console --ci`, `hermes doctor`, chat exchange and remote viewer control remain **manual acceptance gates**.
 
 ## Manual acceptance checklist (non-production profiles)
 
 - [ ] Install the current reviewed commit of Hermes and confirm `hermes --version`
-- [ ] Install the plugin from the review branch or candidate release and run `hermes plugins validate`
+- [ ] Install the plugin from the review branch or candidate release, run `hermes plugins validate /path/to/hermes-bots-console` and `hermes plugins doctor hermes-bots-console --ci`
 - [ ] Open the authenticated Dashboard and confirm the Bots tab appears
 - [ ] Select two harmless test profiles and verify their chats remain isolated
 - [ ] Create a group with 2 test bots, send a harmless message and verify `groups.log` events

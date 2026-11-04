@@ -736,7 +736,7 @@ async def authorize_turbo_operation(profile: str, body: dict[str, Any]) -> dict[
 async def get_diagnostics(profile: str = "default") -> dict[str, Any]:
     profile = _clean_turbo_profile(profile)
     checks: list[dict[str, Any]] = [
-        {"id": "plugin_backend", "label": "Backend del plugin", "required": True, "status": "ok", "detail": "La API del plugin respondió correctamente.", "action": "hermes plugins validate"},
+        {"id": "plugin_backend", "label": "Backend del plugin", "required": True, "status": "ok", "detail": "La API del plugin respondió correctamente.", "action": "hermes plugins doctor hermes-bots-console --ci"},
         {"id": "hermes_runtime", "label": "Hermes Gateway", "required": False, "status": "manual", "detail": "Esta API no comprueba la conexión WebSocket ni la versión del Gateway.", "action": "hermes doctor"},
         {"id": "dashboard_auth", "label": "Dashboard autenticado", "required": False, "status": "manual", "detail": "La autenticación la controla Hermes; el plugin no valida sesiones por este endpoint.", "action": "Abrir el Dashboard autenticado"},
         {"id": "native_groups", "label": "Grupos nativos", "required": False, "status": "manual", "detail": "Comprobá groups.capabilities desde el perfil del Gateway antes de crear una sala.", "action": "Abrir Grupos y comprobar el driver nativo"},

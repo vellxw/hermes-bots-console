@@ -59,6 +59,7 @@ Follow the official [Hermes installation guide](https://github.com/NousResearch/
 ```bash
 hermes plugins install vellxw/hermes-bots-console
 hermes plugins enable hermes-bots-console
+hermes plugins doctor hermes-bots-console --ci
 hermes dashboard
 ```
 
@@ -106,7 +107,7 @@ The plugin is a Dashboard extension, not a fork of Hermes core.
 
 ![Architecture](docs/architecture.svg)
 
-No authenticated screenshots or GIFs are bundled in the repository. Visual certification requires a real authenticated Dashboard session and is kept separate from the portable CI gates.
+No authenticated screenshots or GIFs are bundled in the repository. CI now renders the real UI against an SDK fixture in Chromium, but that does **not** verify a live Hermes session or screen control. Visual certification requires a real authenticated Dashboard session.
 
 - `dashboard/index.js` is the readable frontend source; the cache-busted entry in `dashboard/manifest.json` is the installable bundle.
 - `dashboard/plugin_api.py` exposes the plugin router and delegates native behavior to public Hermes surfaces where available.
@@ -138,7 +139,7 @@ To roll back, stop the Dashboard, restore the previous plugin bundle from the re
 
 ## Troubleshooting
 
-- **Plugin absent:** run `hermes plugins validate` and check that the manifest entry, CSS and SRI match.
+- **Plugin absent:** run `hermes plugins doctor hermes-bots-console --ci`; if you have the plugin source directory, run `hermes plugins validate /path/to/hermes-bots-console` (a path argument is required). Check the manifest entry, CSS and SRI match.
 - **Chat disconnected:** verify the authenticated Dashboard session and the selected profile's Hermes session. Use Reconnect; do not reuse another profile's browser or display.
 - **Group room empty:** the configuration view is not the native room. Open the Hermes group room and inspect `groups.log` for `message.member` events.
 - **Viewer stuck connecting:** inspect the selected profile's `display.status`, then `display.start` and `display.observe`. Low memory, missing Linux Bot Desktop dependencies, a stale lease or a stale ticket are common causes.
@@ -182,13 +183,13 @@ npm run pack       # build release archive
 
 ## Release and catalog status
 
-The current release is **`0.5.0-rc.1`**. `catalog-entry.yaml` describes the honest capabilities and known Linux viewer limitation.
+The last published tag is **`0.5.0-rc.1`**. The open review branch includes unreleased fixes and a distinct `index-v055.js` entry. `catalog-entry.yaml` describes the honest capabilities and known Linux viewer limitation.
 
 Before a public release, the maintainer must:
 
 1. Replace the catalog URL and owner with the authorized repository. ✅ Done
 2. Run `npm run pack` and record the complete SHA-256 printed by the command for `dist/hermes-bots-console-0.5.0-rc.1.tar.gz`.
-3. Run `hermes plugins validate` and `hermes doctor` on the supported Hermes version.
+3. Run `hermes plugins validate /path/to/hermes-bots-console`, `hermes plugins doctor hermes-bots-console --ci`, and `hermes doctor` on the supported Hermes version.
 4. Exercise installation on each available client/gateway combination.
 5. Run an authenticated Dashboard visual check before claiming visual certification.
 6. Publish only after reviewing the release diff and third-party notices.
