@@ -4,6 +4,9 @@
 
 - Fix auxiliary routing so model timeouts and exceptions use local queue/steer fallback.
 - Make first-run diagnostics honest about what the backend can and cannot verify.
+- Remount group rooms by profile and room ID to avoid stale cross-room transcripts; restore draft after failed group sends.
+- Clear RPC/noVNC cancellation timers and remove hardcoded maintainer identity from the public roster.
+- Add a real Chromium fixture smoke test for mobile, groups and desktop (not a live authenticated Hermes certification).
 - Fail closed on membership changes to an existing native Hermes room (upstream currently exposes no public membership edit RPC), paginate `groups.list` using `next_offset`, and verify the actual room roster before sending messages.
 - Verify catalog integrity against its pinned release tag rather than unreleased development assets.
 - Restore portability of storage and test tooling across Linux, macOS and Windows.

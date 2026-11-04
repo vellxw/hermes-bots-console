@@ -18,5 +18,5 @@
   "browser_flow": "browser-flow-v001.mjs",
   "api": "plugin_api.py",
   "source": "user",
-  "integrity": "sha384-VCBkYAy5heiLPth7+1kEBTQyCIj6834OQu0var07o4HToQEDCk7c/GdYvHLMVmJ4"
+  "integrity": "sha384-5rcTgtB7pyhiUgODtM9FDbCJf70+vpJsRGu8jITym+NGHa90AYSOkwS9hMMJ8Kqv"
 }
