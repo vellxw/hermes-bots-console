@@ -35,3 +35,9 @@ jobs:
         run: npm test
       - name: Run Python tests
         run: python -m pytest -q
+      - name: Attach candidate archive (CI artifact, not a GitHub release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-bots-console-${{ matrix.os }}
+          path: dist/hermes-bots-console-0.5.0-rc.1.tar.gz
+          if-no-files-found: error

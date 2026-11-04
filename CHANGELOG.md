@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — public launch hardening (draft PR)
+
+- Fix auxiliary routing so model timeouts and exceptions use local queue/steer fallback.
+- Make first-run diagnostics honest about what the backend can and cannot verify.
+- Fail closed on membership changes to an existing native Hermes room (upstream currently exposes no public membership edit RPC).
+- Restore portability of storage and test tooling across Linux, macOS and Windows.
+- Package only active versioned assets and their readable sources; correct catalog SRI metadata and remove an invalid artifact digest.
+- Clarify that the SVG demonstration is illustrative, not a validated authenticated recording.
+- Keep releases as candidates until real Hermes installation and desktop-viewer acceptance testing is performed.
+
 ## 0.5.0-rc.1
 
 - Added a profile-scoped contextual desktop monitor in the PC chat inspector with explicit lifecycle states, fresh observe tickets, conservative memory gating, human-lease protection, and on-demand cleanup. Mobile keeps its separate fullscreen/touch viewer.
