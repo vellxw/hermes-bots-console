@@ -5,6 +5,7 @@ This document tracks what the portable repository suite can prove and what still
 ## Automated CI gates
 
 - `npm run verify`: manifests, SHA-384 entry integrity, required notices, secret/path markers and JavaScript syntax
+- `npm run verify:catalog`: compare the catalog's pinned tag with the actual tagged frontend bytes, using the local Git tags (`git fetch --tags` when necessary)
 - `npm run build`: reproduce versioned assets from readable sources
 - `npm run pack`: produce a deterministic tarball with only the active versioned frontend assets
 - `npm test`: portable JavaScript contracts (serialized because packaging tests rebuild shared assets)
