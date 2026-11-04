@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -7,7 +8,7 @@ const root = new URL('../', import.meta.url);
 
  test('build regenerates cache-busted assets and manifest integrity from source', async () => {
   const output = execFileSync(process.execPath, ['scripts/build.mjs'], {
-    cwd: new URL(root).pathname,
+    cwd: fileURLToPath(root),
     encoding: 'utf8',
   });
   assert.match(output, /assets verified/);

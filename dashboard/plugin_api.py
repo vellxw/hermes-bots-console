@@ -183,10 +183,15 @@ async def _route_message(body: dict[str, Any]) -> dict[str, Any]:
     if not busy:
         return fallback
     # The auxiliary call is deliberately bounded; a routing failure never blocks the real chat.
-    decision = await asyncio.wait_for(asyncio.to_thread(
-        _call_route_subagent, text, str(body.get("status") or ""), str(body.get("active_task") or "")
-    ), timeout=3.4)
-    return decision if decision.get("action") in _ROUTE_ACTIONS else fallback
+    try:
+        decision = await asyncio.wait_for(asyncio.to_thread(
+            _call_route_subagent, text, str(body.get("status") or ""), str(body.get("active_task") or "")
+        ), timeout=3.4)
+    except Exception:
+        # Classification is advisory. A failed/slow auxiliary model must not
+        # turn a valid chat message into a 500 or block the actual agent.
+        return fallback
+    return decision if isinstance(decision, dict) and decision.get("action") in _ROUTE_ACTIONS else fallback
 
 
 def _clean_name(value: Any) -> str:
@@ -731,8 +736,11 @@ async def authorize_turbo_operation(profile: str, body: dict[str, Any]) -> dict[
 async def get_diagnostics(profile: str = "default") -> dict[str, Any]:
     profile = _clean_turbo_profile(profile)
     checks: list[dict[str, Any]] = [
-        {"id": "hermes_runtime", "label": "Hermes Gateway", "required": True, "status": "ok", "detail": "El plugin está ejecutándose dentro del Dashboard autenticado.", "action": "hermes doctor"},
-        {"id": "dashboard_auth", "label": "Dashboard autenticado", "required": False, "status": "manual", "detail": "La autenticación la controla Hermes; no se solicitan secretos dentro del plugin.", "action": "Abrir el Dashboard autenticado"},
+        {"id": "plugin_backend", "label": "Backend del plugin", "required": True, "status": "ok", "detail": "La API del plugin respondió correctamente.", "action": "hermes plugins doctor hermes-bots-console --ci"},
+        {"id": "hermes_runtime", "label": "Hermes Gateway", "required": False, "status": "manual", "detail": "Esta API no comprueba la conexión WebSocket ni la versión del Gateway.", "action": "hermes doctor"},
+        {"id": "dashboard_auth", "label": "Dashboard autenticado", "required": False, "status": "manual", "detail": "La autenticación la controla Hermes; el plugin no valida sesiones por este endpoint.", "action": "Abrir el Dashboard autenticado"},
+        {"id": "native_groups", "label": "Grupos nativos", "required": False, "status": "manual", "detail": "Comprobá groups.capabilities desde el perfil del Gateway antes de crear una sala.", "action": "Abrir Grupos y comprobar el driver nativo"},
+        {"id": "profile_discovery", "label": "Perfiles Hermes", "required": False, "status": "manual", "detail": "Este endpoint no consulta la lista de perfiles del SDK.", "action": "Abrir Bots y comprobar los perfiles disponibles"},
     ]
     try:
         _profile_storage(profile)

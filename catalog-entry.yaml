@@ -6,7 +6,8 @@ source:
   type: git
   url: https://github.com/vellxw/hermes-bots-console
   ref: v0.5.0-rc.1
-  sha256_asset: bfb0486400e6ea84179072c7291d39152906aa0f
+  # The Git-tag source does not currently publish a corresponding archive asset.
+  # Add sha256_asset only after attaching and hashing a reproducible release archive.
 requires_hermes: ">=0.21.6"
 platforms:
   client: [linux, macos, windows]
@@ -24,4 +25,5 @@ known_issues:
   - Repository: https://github.com/vellxw/hermes-bots-console
 integrity:
   manifest: dashboard/manifest.json
-  entry_sri: sha384-T4u411/6/6y+7cXAbTRnmdlXm8FuE6zVAQskHVucQy1/oM3f6cO28pg0tBSSo6P7
+  # Pinned-tag digest: this is NOT the SRI of the unreleased PR bundle.
+  entry_sri: sha384-clslcCBwwnB0GG2onwJddZN8AhisiYEosNDGJs8Iz4Pch51gMfco9NGbWHyoBbcw

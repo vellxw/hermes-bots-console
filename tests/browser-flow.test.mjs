@@ -162,7 +162,7 @@ test('browser flow facade keeps the ledger and operations profile-scoped', () =>
 
 test('cache-busted dashboard wires the browser-flow policy and visible evidence card', async () => {
   const { readFile } = await import('node:fs/promises');
-  const source = await readFile(new URL('../dashboard/index-v054.js', import.meta.url), 'utf8');
+  const source = await readFile(new URL('../dashboard/index-v055.js', import.meta.url), 'utf8');
   const css = await readFile(new URL('../dashboard/style-v054.css', import.meta.url), 'utf8');
   const manifest = JSON.parse(await readFile(new URL('../dashboard/manifest.json', import.meta.url), 'utf8'));
   const browserFlow = await import(new URL('../dashboard/browser-flow-v001.mjs', import.meta.url));
@@ -173,7 +173,7 @@ test('cache-busted dashboard wires the browser-flow policy and visible evidence 
   assert.match(source, /No se afirma que la cuenta esté activa/);
   assert.match(css, /\.hb-browser-flow/);
   assert.equal(manifest.version, '0.5.0-rc.1');
-  assert.equal(manifest.entry, 'index-v054.js');
+  assert.equal(manifest.entry, 'index-v055.js');
   assert.equal(manifest.css, 'style-v054.css');
   assert.equal(manifest.browser_flow, 'browser-flow-v001.mjs');
 });

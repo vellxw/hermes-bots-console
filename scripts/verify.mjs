@@ -8,7 +8,9 @@ const script = fileURLToPath(import.meta.url);
 const project = join(script, '..', '..');
 const forbidden = [/\/home\/[A-Za-z0-9._-]+(?:\/|$)/, /\/run\/user\/\d+(?:\/|$)/];
 const secretAssignment = /(?:api[_-]?key|password|passwd|secret|token|connection[_-]?string)\s*[:=]\s*['"](?!\[REDACTED\]|FAKE_|CHANGE_ME|YOUR_|<)[^'"]{8,}['"]/i;
-const ignored = new Set([relative(project, script), 'dashboard/novnc/rfb.bundle.js']);
+// Git reports tracked paths with forward slashes even on Windows.
+// Never scan this verifier for the command patterns it deliberately detects.
+const ignored = new Set(['scripts/verify.mjs', 'dashboard/novnc/rfb.bundle.js']);
 
 function trackedFiles() {
   const output = execFileSync('git', ['ls-files', '-co', '--exclude-standard'], { cwd: project, encoding: 'utf8' });

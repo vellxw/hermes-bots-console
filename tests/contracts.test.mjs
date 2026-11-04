@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const contracts = await import(pathToFileURL(new URL('../dashboard/contracts.mjs', import.meta.url).pathname).href);
+const contracts = await import(pathToFileURL(fileURLToPath(new URL('../dashboard/contracts.mjs', import.meta.url))).href);
 
 const fixedNow = 1700000000000;
 
@@ -135,7 +135,7 @@ test('fixture dry-run expone interfaces mock reproducibles sin side effects', as
 
 test('contrato JSON documenta las mismas superficies que consumen los módulos', async () => {
   const spec = JSON.parse(await readFile(new URL('../contracts/bot-console-contracts.json', import.meta.url), 'utf8'));
-  const versioned = await import(pathToFileURL(new URL('../dashboard/contracts-v001.mjs', import.meta.url).pathname).href);
+  const versioned = await import(pathToFileURL(fileURLToPath(new URL('../dashboard/contracts-v001.mjs', import.meta.url))).href);
   assert.equal(spec.contract_version, contracts.CONTRACT_VERSION);
   assert.equal(versioned.CONTRACT_VERSION, contracts.CONTRACT_VERSION);
   for (const key of ['profile_state', 'isolation_binding', 'authorization_grant', 'audit_event', 'multimodal_response', 'markdown_document', 'voice_descriptor', 'screen_dry_run', 'group_dry_run']) {

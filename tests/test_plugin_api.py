@@ -156,12 +156,15 @@ async def test_attachments_are_exposed_through_the_real_fastapi_router(tmp_path,
 
 @pytest.mark.asyncio
 async def test_display_name_route_preserves_case_and_spaces(monkeypatch):
-    hermes_root = Path.home() / ".hermes" / "hermes-agent"
-    if hermes_root.is_dir():
-        sys.path.insert(0, str(hermes_root))
-    import hermes_cli.profiles as profiles_mod
-
-    monkeypatch.setattr(profiles_mod, "set_profile_display_name", lambda profile, value: value)
+    # Portable CI has no Hermes installed. Mock the public import boundary
+    # instead of forcing a workstation-local Hermes checkout into the suite.
+    from types import ModuleType
+    profiles_mod = ModuleType("hermes_cli.profiles")
+    profiles_mod.set_profile_display_name = lambda profile, value: value
+    hermes_cli = ModuleType("hermes_cli")
+    hermes_cli.profiles = profiles_mod
+    monkeypatch.setitem(sys.modules, "hermes_cli", hermes_cli)
+    monkeypatch.setitem(sys.modules, "hermes_cli.profiles", profiles_mod)
     result = await plugin_api.update_profile_display_name("xmanager", {"display_name": "X Manager"})
     assert result == {"ok": True, "profile": "xmanager", "display_name": "X Manager"}
     with pytest.raises(plugin_api.HTTPException) as invalid:
@@ -187,7 +190,39 @@ async def test_diagnostics_separates_required_storage_from_optional_viewer(monke
     checks = {item["id"]: item for item in result["checks"]}
     assert checks["profile_storage"]["required"] is True
     assert checks["profile_storage"]["status"] == "ok"
-    assert checks["hermes_runtime"]["required"] is True
+    assert checks["plugin_backend"]["required"] is True
+    assert checks["plugin_backend"]["status"] == "ok"
+    assert checks["plugin_backend"]["action"] == "hermes plugins doctor hermes-bots-console --ci"
+    assert checks["hermes_runtime"]["required"] is False
+    assert checks["hermes_runtime"]["status"] == "manual"
+    assert checks["native_groups"]["status"] == "manual"
+    assert checks["profile_discovery"]["status"] == "manual"
     assert checks["desktop_viewer"]["required"] is False
     assert checks["desktop_viewer"]["status"] == "manual"
 
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_route_timeout_uses_safe_local_fallback(monkeypatch):
+    async def immediately_time_out(coroutine, timeout):
+        coroutine.close()  # avoid leaving an unawaited to_thread coroutine
+        raise TimeoutError("fixture timeout")
+
+    monkeypatch.setattr(plugin_api.asyncio, "wait_for", immediately_time_out)
+    result = await plugin_api._route_message({
+        "profile": "researcher", "text": "Prepare the report after this", "busy": True,
+    })
+    assert result == {"action": "queue_next", "source": "local-policy", "confidence": 0.86}
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_route_exception_does_not_break_chat(monkeypatch):
+    def broken_router(*args):
+        raise RuntimeError("temporary model outage")
+
+    monkeypatch.setattr(plugin_api, "_call_route_subagent", broken_router)
+    result = await plugin_api._route_message({
+        "profile": "researcher", "text": "Please do this later", "busy": True,
+    })
+    assert result["action"] == "queue_next"
+    assert result["source"] == "local-policy"

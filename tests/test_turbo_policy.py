@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -30,7 +31,8 @@ class TurboPolicyTests(unittest.TestCase):
         self.assertFalse(restarted.authorize("alpha", self.op)["allowed"])
         self.assertEqual(restarted.get("beta")["grants"], [])
         self.assertEqual(restarted.get("beta")["audit"], [])
-        self.assertEqual((self.root / "alpha.json").stat().st_mode & 0o777, 0o600)
+        if os.name != "nt":  # Windows does not expose POSIX permission bits
+            self.assertEqual((self.root / "alpha.json").stat().st_mode & 0o777, 0o600)
 
     def test_pending_cancel_and_single_use(self):
         self.store.set_mode("alpha", "autonomous")

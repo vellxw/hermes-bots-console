@@ -128,6 +128,4 @@ Describe the user-visible behavior, supported client and gateway operating syste
 
 ---
 
-Thank you for contributing! 🎉
-CONTRIBUTINGEOF
-echo "CONTRIBUTING.md updated"
+Thank you for contributing!

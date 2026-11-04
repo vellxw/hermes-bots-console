@@ -45,31 +45,34 @@
   function screenRequest(rpc, method, params, timeout = 12000, signal) {
     return new Promise((resolve, reject) => {
       let expired = false;
+      let timer;
+      const clear = () => { window.clearTimeout(timer); signal?.removeEventListener("abort", abort); };
       const abort = () => {
         if (expired) return;
         expired = true;
+        clear();
         try { rpc.close(); } catch (_) {}
         reject(screenLifecycleError("La operación del monitor fue cancelada.", "idle"));
       };
       if (signal?.aborted) { abort(); return; }
       signal?.addEventListener("abort", abort, { once: true });
-      const timer = window.setTimeout(() => {
+      timer = window.setTimeout(() => {
+        if (expired) return;
         expired = true;
-        signal?.removeEventListener("abort", abort);
-        // A timed-out RPC remains in the Gateway's request queue unless its transport is
-        // closed. Reusing that socket makes a slow display.start hold every later observe.
+        clear();
+        // Timed-out requests must not block the next Gateway operation.
         try { rpc.close(); } catch (_) {}
         reject(new Error("El Gateway tardó demasiado en responder. Pulsá Reconectar."));
       }, timeout);
-      rpc.request(method, params).then((value) => {
+      Promise.resolve().then(() => rpc.request(method, params)).then((value) => {
         if (expired) return;
-        window.clearTimeout(timer);
-        signal?.removeEventListener("abort", abort);
+        expired = true;
+        clear();
         resolve(value);
       }).catch((error) => {
         if (expired) return;
-        window.clearTimeout(timer);
-        signal?.removeEventListener("abort", abort);
+        expired = true;
+        clear();
         reject(error);
       });
     });
@@ -77,26 +80,31 @@
   function importWithTimeout(loader, timeout = 15000, signal) {
     return new Promise((resolve, reject) => {
       let settled = false;
-      const abort = () => { if (!settled) { settled = true; reject(screenLifecycleError("La carga del visor fue cancelada.", "idle")); } };
+      let timer;
+      const clear = () => { window.clearTimeout(timer); signal?.removeEventListener("abort", abort); };
+      const abort = () => {
+        if (settled) return;
+        settled = true;
+        clear();
+        reject(screenLifecycleError("La carga del visor fue cancelada.", "idle"));
+      };
       if (signal?.aborted) { abort(); return; }
       signal?.addEventListener("abort", abort, { once: true });
-      const timer = window.setTimeout(() => {
+      timer = window.setTimeout(() => {
         if (settled) return;
         settled = true;
-        signal?.removeEventListener("abort", abort);
+        clear();
         reject(new Error("noVNC tardó demasiado en cargar. Pulsá Reconectar."));
       }, timeout);
-      loader().then((value) => {
+      Promise.resolve().then(loader).then((value) => {
         if (settled) return;
         settled = true;
-        window.clearTimeout(timer);
-        signal?.removeEventListener("abort", abort);
+        clear();
         resolve(value);
       }).catch((error) => {
         if (settled) return;
         settled = true;
-        window.clearTimeout(timer);
-        signal?.removeEventListener("abort", abort);
+        clear();
         reject(error);
       });
     });
@@ -855,6 +863,9 @@
 
   const nativeGroupRoomId = (profile, groupId) => `hermes-bots-${String(profile || "default").toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").slice(0, 24)}-${String(groupId || "group").toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").slice(0, 64)}`;
   const nativeGroupHandle = (profile) => String(profile || "bot").toLowerCase().replace(/[^a-z0-9_.:-]+/g, "-").slice(0, 64) || "bot";
+  const nativeGroupCoordinator = (bots, profile, names = []) =>
+    bots.find(bot => bot.name === profile) || bots.find(bot => bot.is_default) ||
+    bots.find(bot => names.includes(bot.name)) || bots[0];
   const nativeGroupEventText = (event) => {
     const payload = event?.payload || {}; const actor = event?.actor?.display_name || event?.actor?.profile || event?.actor?.id || "El grupo";
     if (event?.kind === "message.user" || event?.kind === "message.member") return String(payload.text || "").trim();
@@ -886,7 +897,7 @@
           if (!row) throw new Error("No se encontró la configuración de este grupo.");
           const names = [...new Set((row.members || []).map((name) => String(name).trim().toLowerCase()).filter(Boolean))];
           if (names.length < 2 || names.length > 6) throw new Error("La sala nativa necesita entre 2 y 6 bots miembros.");
-          const coordinator = bots.find((bot) => bot.name === profile) || bots.find((bot) => bot.is_default) || bots.find((bot) => names.includes(bot.name)) || bots[0];
+          const coordinator = nativeGroupCoordinator(bots, profile, names);
           if (!coordinator) throw new Error("No hay un perfil coordinador disponible.");
           const known = new Map(bots.map((bot) => [bot.name, bot])); const memberInputs = names.map((name) => ({ member_id: name, profile: name, handle: nativeGroupHandle(name), display_name: profileLabel(known.get(name) || { name }) }));
           const roomId = nativeGroupRoomId(profile, row.id); const threadId = `thread-${roomId}`;
@@ -894,9 +905,11 @@
           const rpc = new RpcClient(coordinator.name); rpcRef.current = rpc;
           const caps = await screenRequest(rpc, "groups.capabilities", { profile: coordinator.name }, 8000); if (!caps?.driver || !Array.isArray(caps.methods) || !caps.methods.includes("groups.send")) throw new Error("El Gateway no tiene habilitado el driver nativo de grupos.");
           setCapabilities(caps);
-          const listing = await screenRequest(rpc, "groups.list", { profile: coordinator.name, limit: 500 }, 8000); let nativeRoom = (listing.rooms || []).find((item) => item.room_id === roomId);
+          const { findNativeRoom, assertNativeRoomMembers } = await import(`${ASSET}/group-membership.mjs`);
+          let nativeRoom = await findNativeRoom(roomId, ({limit, offset}) =>
+            screenRequest(rpc, "groups.list", {profile: coordinator.name, limit, offset}, 8000));
           if (!nativeRoom) nativeRoom = (await screenRequest(rpc, "groups.create", { profile: coordinator.name, room_id: roomId, name: row.name, members: memberInputs }, 12000)).room;
-          if (!nativeRoom) throw new Error("El Gateway no devolvió la sala nativa.");
+          assertNativeRoomMembers(names, nativeRoom);
           setRoom(nativeRoom); setPhase("live");
           const sync = async () => {
             if (!aliveRef.current || syncLockRef.current || !rpcRef.current) return; syncLockRef.current = true;
@@ -914,7 +927,7 @@
     }, [appendEvents, bots, groupId, profile]);
     const send = useCallback(async () => {
       const text = draft.trim(); const currentRoom = room; const profile = coordinatorName; if (!text || !currentRoom || !profile || !rpcRef.current || busy) return; setDraft(""); setBusy(true); setError("");
-      try { const eventId = `mobile-${Date.now()}-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)}`; const result = await screenRequest(rpcRef.current, "groups.send", { profile, room_id: currentRoom.room_id, event_id: eventId, payload: { thread_id: threadRef.current, text } }, 12000); if (result?.accepted === false) throw new Error("El grupo no aceptó el mensaje."); await syncRoomRef.current?.(); } catch (err) { setError(errText(err)); } finally { setBusy(false); }
+      try { const eventId = `mobile-${Date.now()}-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)}`; const result = await screenRequest(rpcRef.current, "groups.send", { profile, room_id: currentRoom.room_id, event_id: eventId, payload: { thread_id: threadRef.current, text } }, 12000); if (result?.accepted === false) throw new Error("El grupo no aceptó el mensaje."); await syncRoomRef.current?.(); } catch (err) { setDraft((current) => current.trim() ? current : text); setError(errText(err)); } finally { setBusy(false); }
     }, [busy, coordinatorName, draft, room]);
     const stop = useCallback(async () => { if (!room || !coordinatorName || !rpcRef.current) return; setBusy(true); try { await screenRequest(rpcRef.current, "groups.stop", { profile: coordinatorName, room_id: room.room_id }, 12000); await syncRoomRef.current?.(); } catch (err) { setError(errText(err)); } finally { setBusy(false); } }, [coordinatorName, room]);
     const members = room?.members || group?.members || []; const working = Boolean(driver?.working); const pending = Array.isArray(driver?.pending_actions) && driver.pending_actions.length > 0;
@@ -929,7 +942,27 @@
     useEffect(() => { if (!selected) return; setMembers(selected.members || []); setSkills(selected.skills || []); Promise.all((selected.members || []).map((n) => api.getSkills(n).catch(() => []))).then((lists) => { const map = new Map(); lists.flat().forEach((s) => s?.name && map.set(s.name, s)); setAvailableSkills([...map.values()].sort((a, b) => a.name.localeCompare(b.name))); }); }, [selected]);
     const toggle = (list, value) => list.includes(value) ? list.filter((x) => x !== value) : [...list, value];
     const create = async () => { if (!draft.trim()) return; try { const row = await fetchJSON(`/api/plugins/${PLUGIN}/groups?profile=${encodeURIComponent(profile)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: draft.trim(), members: [], skills: [] }) }); setDraft(""); await load(); setSelected(row); } catch (e) { setError(errText(e)); } };
-    const save = async () => { if (!selected) return; setBusy(true); try { const row = await fetchJSON(`/api/plugins/${PLUGIN}/groups/${encodeURIComponent(selected.id)}?profile=${encodeURIComponent(profile)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: selected.name, members, skills }) }); await Promise.all(bots.filter((b) => members.includes(b.name)).flatMap((b) => availableSkills.filter((s) => skills.includes(s.name)).map((s) => api.toggleSkill(s.name, true, b.name)))); setSelected(row); await load(); } catch (e) { setError(errText(e)); } finally { setBusy(false); } };
+    const save = async () => {
+      if (!selected) return;
+      setBusy(true); setError("");
+      try {
+        const { isMembershipChanged, findNativeRoom, assertNativeMembershipEditable } = await import(`${ASSET}/group-membership.mjs`);
+        if (isMembershipChanged(selected.members || [], members)) {
+          const coordinator = nativeGroupCoordinator(bots, profile, selected.members || []);
+          if (!coordinator) throw new Error("No hay un perfil de Hermes disponible para verificar este grupo.");
+          const rpc = new RpcClient(coordinator.name);
+          let existingRoom;
+          try {
+            existingRoom = await findNativeRoom(nativeGroupRoomId(profile, selected.id), ({limit,offset}) =>
+              screenRequest(rpc, "groups.list", {profile: coordinator.name, limit, offset}, 8000));
+          } finally { try { rpc.close(); } catch (_) {} }
+          assertNativeMembershipEditable(selected.members || [], members, existingRoom);
+        }
+        const row = await fetchJSON(`/api/plugins/${PLUGIN}/groups/${encodeURIComponent(selected.id)}?profile=${encodeURIComponent(profile)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: selected.name, members, skills }) });
+        await Promise.all(bots.filter((b) => members.includes(b.name)).flatMap((b) => availableSkills.filter((s) => skills.includes(s.name)).map((s) => api.toggleSkill(s.name, true, b.name))));
+        setSelected(row); await load();
+      } catch (e) { setError(errText(e)); } finally { setBusy(false); }
+    };
     return h("div", { className: "hb-groups-view" }, error ? h("div", { className: "hb-error" }, error) : null, h("section", { className: "hb-card group-create" }, h("div", null, h("strong", null, "Grupos de trabajo"), h("p", { className: "hb-subtitle" }, "Administración de miembros y skills; la sala nativa de Hermes sigue siendo la fuente del chat grupal.")), h("div", { className: "hb-row-actions" }, h("input", { className: "hb-input", value: draft, placeholder: "Ej. Investigación", onChange: (e) => setDraft(e.target.value) }), button("Crear grupo", create, "primary", !draft.trim()))), h("div", { className: "hb-group-grid" }, groups.map((g) => h("article", { className: `hb-card hb-group-card ${selected?.id === g.id ? "selected" : ""}`, key: g.id }, h("h3", null, g.name), h("p", null, `${(g.members || []).length} bots · ${(g.skills || []).length} skills aplicadas`), h("div", { className: "hb-member-list" }, (g.members || []).map((m) => h("span", { className: "hb-member", key: m }, m))), h("div", { className: "hb-row-actions" }, button("Abrir sala", () => navigate({ view: "group", group: g.id, profile }), "primary", (g.members || []).length < 2 || (g.members || []).length > 6), button("Administrar", () => setSelected(g), "ghost"))))), selected ? h("section", { className: "hb-card hb-group-editor" }, h("div", { className: "hb-panel-heading" }, h("h3", null, `Editar ${selected.name}`), button("Cerrar", () => setSelected(null), "ghost")), h("div", { className: "hb-field" }, h("label", null, "Miembros"), h("div", { className: "hb-checklist" }, bots.map((b) => h("label", { className: "hb-check", key: b.name }, h("input", { type: "checkbox", checked: members.includes(b.name), onChange: () => setMembers(toggle(members, b.name)) }), h("span", null, profileLabel(b))))), h("div", { className: "hb-field" }, h("label", null, "Skills del grupo · se aplican por perfil"), h("div", { className: "hb-checklist" }, availableSkills.map((s) => h("label", { className: "hb-check", key: s.name }, h("input", { type: "checkbox", checked: skills.includes(s.name), onChange: () => setSkills(toggle(skills, s.name)) }), h("span", null, s.name)))), h("p", { className: "hb-subtitle" }, "No se habilitan skills globales: la sala mobile usa el driver nativo de Hermes y conserva su historial como fuente de verdad."), button(busy ? "Aplicando…" : "Guardar y aplicar", save, "primary", busy)))) : null);
   }
 
@@ -1056,9 +1089,12 @@
       const shift = Number(dragState.shifts?.[key] || 0); if (!shift) return undefined;
       return { transform: `translate3d(${zone === "pins" ? shift : 0}px, ${zone === "feed" ? shift : 0}px, 0)`, transition: "transform 160ms ease" };
     };
+    const headerBot = bots.find((candidate) => candidate.name === profile) || bots.find((candidate) => candidate.is_default);
+    const headerLabel = headerBot ? profileLabel(headerBot) : "Hermes";
+    const headerInitial = headerLabel.trim().slice(0, 1).toUpperCase() || "H";
     const headerSearch = searchOpen ? h("label", { className: "hb-roster-search" }, searchIcon(), h("input", { autoFocus: true, value: search, placeholder: "Buscar", "aria-label": "Buscar bots", onChange: (event) => setSearch(event.target.value) })) : iconButton("Buscar bots", searchIcon(), () => setSearchOpen(true), "hb-round-action");
     return h("div", { className: "hb-roster-screen" },
-      h("header", { className: "hb-roster-header" }, h("div", { className: "hb-user-mark", "aria-label": "Perfil de Franco" }, "F"), h("div", { className: "hb-roster-actions" }, headerSearch, iconButton("Crear bot", plusIcon(), onCreate, "hb-round-action"))),
+      h("header", { className: "hb-roster-header" }, h("div", { className: "hb-user-mark", "aria-label": `Perfil ${headerLabel}` }, headerInitial), h("div", { className: "hb-roster-actions" }, headerSearch, iconButton("Crear bot", plusIcon(), onCreate, "hb-round-action"))),
       h(PinStrip, { bots, groups, meta, onChat: (bot) => navigate({ view: "chat", profile: bot.name }), onRequestDelete: requestDelete, onHoldStart: handleHoldStart, onHoldEnd: handleHoldEnd, onGroup: (group) => onGroup?.(group), onReorderStart: handleReorderStart, onReorderMove: handleReorderMove, onReorderEnd: handleReorderEnd, draggingKey: dragState.key, holdingKey, dragStyleFor }),
       error ? h("div", { className: "hb-roster-error" }, error) : null,
       loading ? h("div", { className: "hb-roster-loading" }, "Cargando…") : null,
@@ -1375,7 +1411,7 @@
   }
 
   function DesktopWorkspace({ bots, groups, route, bot, search, onSearch, onSelect, onCreate, onEdit, onMarketplace, marketplaceOpen, onCloseMarketplace }) {
-    const main = route.view === "group" ? h(GroupRoomView, { bots, groupId: route.group, profile: bot?.name || route.profile || "default" }) : route.view === "groups" ? h(GroupsView, { bots, profile: bot?.name || route.profile || "default" }) : bot ? h(ChatView, { bot, storedId: route.session, onEdit }) : h("div", { className: "hb-desktop-empty-state" }, "Creá o seleccioná un bot para comenzar.");
+    const main = route.view === "group" ? h(GroupRoomView, { key: `${bot?.name || route.profile || "default"}:${route.group}`, bots, groupId: route.group, profile: bot?.name || route.profile || "default" }) : route.view === "groups" ? h(GroupsView, { bots, profile: bot?.name || route.profile || "default" }) : bot ? h(ChatView, { bot, storedId: route.session, onEdit }) : h("div", { className: "hb-desktop-empty-state" }, "Creá o seleccioná un bot para comenzar.");
     return h("div", { className: "hb-desktop-workspace" }, h(DesktopBotRail, { bots, selectedBot: bot, search, onSearch, onSelect, onCreate, onMarketplace }), h("main", { className: "hb-desktop-main" }, main), h(DesktopInspector, { bot, route, onEdit, onMarketplace }), marketplaceOpen ? h(DesktopMarketplace, { bots, onClose: onCloseMarketplace, onSelect }) : null);
   }
 
@@ -1433,7 +1469,7 @@
     const dismissOnboarding = () => { try { localStorage.setItem(`hermes-bots-console.onboarding.${onboardingProfile}`, "dismissed"); } catch (_) {} setShowOnboarding(false); };
     const onboarding = showOnboarding && !loading && bot ? h(OnboardingCard, { profile: onboardingProfile, onDismiss: dismissOnboarding }) : null;
     const roster = h(RosterView, { bots, groups, profile: dataProfile, loading, error, onRefresh: refresh, onCreate: () => setSheet({ type: "create" }), onScreen: setScreenBot, onEdit: (b) => setSheet({ type: "edit", bot: b }), onGroup: (group) => navigate({ view: "group", group: group.id, profile: dataProfile }) });
-    const content = route.view === "chat" && bot ? h("div", { className: "hb-split-view is-chat" }, h("aside", { className: "hb-roster-pane" }, roster), h("section", { className: "hb-chat-pane" }, h(ChatView, { bot, storedId: route.session, onEdit: (item) => setSheet({ type: "edit", bot: item }), onOpenMonitor: setScreenBot }))) : route.view === "group" ? h(GroupRoomView, { bots, groupId: route.group, profile: dataProfile }) : route.view === "groups" ? h(GroupsView, { bots, profile: dataProfile }) : roster;
+    const content = route.view === "chat" && bot ? h("div", { className: "hb-split-view is-chat" }, h("aside", { className: "hb-roster-pane" }, roster), h("section", { className: "hb-chat-pane" }, h(ChatView, { bot, storedId: route.session, onEdit: (item) => setSheet({ type: "edit", bot: item }), onOpenMonitor: setScreenBot }))) : route.view === "group" ? h(GroupRoomView, { key: `${dataProfile}:${route.group}`, bots, groupId: route.group, profile: dataProfile }) : route.view === "groups" ? h(GroupsView, { bots, profile: dataProfile }) : roster;
     const desktop = h(DesktopWorkspace, { bots, groups, route, bot, search: desktopSearch, onSearch: setDesktopSearch, onSelect: (item) => navigate({ view: "chat", profile: item.name }), onCreate: () => setSheet({ type: "create" }), onEdit: () => setSheet({ type: "edit", bot }), onMarketplace: () => setMarketplaceOpen(true), marketplaceOpen, onCloseMarketplace: () => setMarketplaceOpen(false) });
     const mobileSurface = h("div", { className: route.view === "chat" && bot ? "hb-mobile-surface is-chat" : "hb-mobile-surface" }, onboarding, content, screenBot ? h("div", { className: "hb-screen-overlay mobile-screen" }, h(ScreenPanel, { key: screenBot.name, bot: screenBot, onClose: () => setScreenBot(null) })) : null);
     // Desktop owns exactly one contextual ScreenPanel inside DesktopInspector.
