@@ -496,7 +496,7 @@ test('cache-busted release contains the automatic router and continue flow', asy
   assert.match(core, /continueRun/);
   assert.match(css, /hb-continue-button/);
   assert.equal(manifest.version, '0.5.0-rc.1');
-  assert.equal(manifest.entry, 'index-v054.js');
+  assert.equal(manifest.entry, 'index-v055.js');
   assert.equal(manifest.css, 'style-v054.css');
 });
 

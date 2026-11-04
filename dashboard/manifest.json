@@ -11,7 +11,7 @@
   "slots": [
     "chat:top"
   ],
-  "entry": "index-v054.js",
+  "entry": "index-v055.js",
   "css": "style-v054.css",
   "interaction_core": "interaction-core-v001.mjs",
   "contracts": "contracts-v001.mjs",

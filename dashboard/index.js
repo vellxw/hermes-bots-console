@@ -11,7 +11,7 @@
   const BASE = window.__HERMES_BASE_PATH__ || "";
   const ASSET = `${window.location.origin}${BASE}/dashboard-plugins/${PLUGIN}`;
   const CURRENT_RELEASE = "0.5.0-rc.1";
-  const CURRENT_ENTRY = "index-v054.js";
+  const CURRENT_ENTRY = "index-v055.js";
   const CURRENT_CSS = "style-v054.css";
   const INTERACTION_CORE = "interaction-core-v001.mjs";
   const BROWSER_FLOW_CORE = "browser-flow-v001.mjs";

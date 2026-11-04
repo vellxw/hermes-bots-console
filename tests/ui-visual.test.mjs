@@ -19,7 +19,7 @@ test('pixel surface exposes fixed Chief roster and responsive split-view contrac
   assert.match(css, /\.hb-split-view/);
   assert.match(css, /@media \(min-width: 768px\)/);
   assert.match(css, /@media \(max-width: 767px\)/);
-  assert.equal(manifest.entry, 'index-v054.js');
+  assert.equal(manifest.entry, 'index-v055.js');
   assert.equal(manifest.css, 'style-v054.css');
 });
 

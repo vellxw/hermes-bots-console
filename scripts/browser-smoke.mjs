@@ -40,7 +40,7 @@ const fixture = `<!doctype html><html lang="es"><head><meta charset="utf-8">
     registerSlot:()=>{}
   };
 </script>
-<script src="/dashboard-plugins/hermes-bots-console/index-v054.js"></script>
+<script src="/dashboard-plugins/hermes-bots-console/index-v055.js"></script>
 <script>
   if (!window.HermesFixturePage) throw Error('Dashboard plugin did not register');
   ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(window.HermesFixturePage));
