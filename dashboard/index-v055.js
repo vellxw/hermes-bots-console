@@ -914,9 +914,19 @@
           const sync = async () => {
             if (!aliveRef.current || syncLockRef.current || !rpcRef.current) return; syncLockRef.current = true;
             try {
-              let since = cursorRef.current || null; let page;
-              do { page = await screenRequest(rpc, "groups.log", { profile: coordinator.name, room_id: roomId, since_seq: since, limit: Math.min(200, caps.max_log_limit || 200) }, 8000); appendEvents(page.events || []); const next = Number(page.latest_seq || since || 0); if (next <= Number(since || 0) && !(page.events || []).length) break; since = next; } while (page?.has_more);
-              cursorRef.current = Number(since || 0); const state = await screenRequest(rpc, "groups.state", { profile: coordinator.name, room_id: roomId }, 8000); if (state.room) setRoom(state.room); setDriver(state.driver_status || null); setError("");
+              const { readNativeGroupLog } = await import(`${ASSET}/group-log.mjs`);
+              const page = await readNativeGroupLog(({since_seq, limit}) =>
+                screenRequest(rpc, "groups.log", {
+                  profile: coordinator.name, room_id: roomId, since_seq, limit,
+                }, 8000), { since: cursorRef.current, limit: Math.min(200, caps.max_log_limit || 200) });
+              if (!aliveRef.current) return;
+              appendEvents(page.events);
+              cursorRef.current = page.cursor;
+              const state = await screenRequest(rpc, "groups.state", { profile: coordinator.name, room_id: roomId }, 8000);
+              if (!aliveRef.current) return;
+              if (state.room) setRoom(state.room);
+              setDriver(state.driver_status || null);
+              setError("");
             } catch (err) { if (aliveRef.current) setError(errText(err)); } finally { syncLockRef.current = false; }
           };
           syncRoomRef.current = sync; await sync(); timer = window.setInterval(sync, 1800);

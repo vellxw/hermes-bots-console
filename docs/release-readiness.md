@@ -28,6 +28,7 @@ CI is a cross-platform portability gate. The separate Chromium fixture job rende
 - [ ] Open the authenticated Dashboard and confirm the Bots tab appears
 - [ ] Select two harmless test profiles and verify their chats remain isolated
 - [ ] Create a group with 2 test bots, send a harmless message and verify `groups.log` events
+- [ ] Generate over 200 group events and verify cursor-by-cursor pagination delivers every event without gaps (using Hermes' `cursor`, never `latest_seq`)
 - [ ] After room creation, attempt to edit members: the UI must refuse the change without modifying local configuration
 - [ ] Switch from a busy/high-sequence group to a second room and verify the first room's events do not appear in the second
 - [ ] Force a failed `groups.send` operation and confirm the unsent draft is restored without overwriting newer typing
