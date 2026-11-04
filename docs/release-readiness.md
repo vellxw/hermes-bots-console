@@ -11,7 +11,7 @@ This document tracks what the portable repository suite can prove and what still
 - `npm test`: portable JavaScript contracts (serialized because packaging tests rebuild shared assets)
 - `python -m pytest -q`: Python backend, profile safety, routing and persistence
 
-CI is a cross-platform portability gate. The separate Chromium fixture job renders the actual plugin UI with mocked Hermes SDK responses at mobile and desktop sizes; screenshots from that job are **fixture renders**, not an authenticated Hermes demo. Neither CI job certifies a live Gateway, Bot Desktop, or a real user session.
+CI is a cross-platform portability gate. The separate Chromium fixture job renders the actual plugin UI with mocked Hermes SDK responses at mobile and desktop sizes, and tests native group JSON-RPC history pagination, send acknowledgment and a failed-send draft recovery through a simulated WebSocket. Screenshots from that job are **fixture renders**, not an authenticated Hermes demo. Neither CI job certifies a live Gateway, Bot Desktop, or a real user session.
 
 ## Known capability limits
 

@@ -8,8 +8,10 @@ The dashboard's cache-busted entry advances to `index-v055.js` so existing clien
 - Make first-run diagnostics honest about what the backend can and cannot verify.
 - Remount group rooms by profile and room ID to avoid stale cross-room transcripts; restore draft after failed group sends.
 - Clear RPC/noVNC cancellation timers and remove hardcoded maintainer identity from the public roster.
-- Add a real Chromium fixture smoke test for mobile, groups and desktop (not a live authenticated Hermes certification).
+- Add a real Chromium fixture smoke test for mobile, groups and desktop, including a JSON-RPC group session with paginated history, successful send and failed-send draft recovery (not a live authenticated Hermes certification).
+- Correct documentation for `hermes plugins validate <directory>` and add the cross-platform `hermes plugins doctor hermes-bots-console --ci` path.
 - Fail closed on membership changes to an existing native Hermes room (upstream currently exposes no public membership edit RPC), paginate `groups.list` using `next_offset`, and verify the actual room roster before sending messages.
+- Correct `groups.log` replay to advance through the **received** `cursor`, not `latest_seq`, so multi-page histories are not skipped. Reject non-progressing or inconsistent pages.
 - Verify catalog integrity against its pinned release tag rather than unreleased development assets.
 - Restore portability of storage and test tooling across Linux, macOS and Windows.
 - Package only active versioned assets and their readable sources, omit development-only tests/scripts from installation archives, and correct catalog SRI metadata and invalid artifact digest.

@@ -27,12 +27,12 @@ jobs:
           python-version: '3.11'
       - name: Install Python test dependencies
         run: python -m pip install --disable-pip-version-check pytest pytest-asyncio fastapi httpx python-multipart
-      - name: Build updated frontend and capture SRI
-        run: npm run build
       - name: Verify committed distribution integrity
         run: npm run verify
       - name: Verify published-tag catalog integrity
         run: npm run verify:catalog
+      - name: Verify reproducible bundles
+        run: npm run build
       - name: Package deterministic release archive
         run: npm run pack
       - name: Run JavaScript tests
