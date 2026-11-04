@@ -855,6 +855,9 @@
 
   const nativeGroupRoomId = (profile, groupId) => `hermes-bots-${String(profile || "default").toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").slice(0, 24)}-${String(groupId || "group").toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").slice(0, 64)}`;
   const nativeGroupHandle = (profile) => String(profile || "bot").toLowerCase().replace(/[^a-z0-9_.:-]+/g, "-").slice(0, 64) || "bot";
+  const nativeGroupCoordinator = (bots, profile, names = []) =>
+    bots.find(bot => bot.name === profile) || bots.find(bot => bot.is_default) ||
+    bots.find(bot => names.includes(bot.name)) || bots[0];
   const nativeGroupEventText = (event) => {
     const payload = event?.payload || {}; const actor = event?.actor?.display_name || event?.actor?.profile || event?.actor?.id || "El grupo";
     if (event?.kind === "message.user" || event?.kind === "message.member") return String(payload.text || "").trim();
@@ -886,7 +889,7 @@
           if (!row) throw new Error("No se encontró la configuración de este grupo.");
           const names = [...new Set((row.members || []).map((name) => String(name).trim().toLowerCase()).filter(Boolean))];
           if (names.length < 2 || names.length > 6) throw new Error("La sala nativa necesita entre 2 y 6 bots miembros.");
-          const coordinator = bots.find((bot) => bot.name === profile) || bots.find((bot) => bot.is_default) || bots.find((bot) => names.includes(bot.name)) || bots[0];
+          const coordinator = nativeGroupCoordinator(bots, profile, names);
           if (!coordinator) throw new Error("No hay un perfil coordinador disponible.");
           const known = new Map(bots.map((bot) => [bot.name, bot])); const memberInputs = names.map((name) => ({ member_id: name, profile: name, handle: nativeGroupHandle(name), display_name: profileLabel(known.get(name) || { name }) }));
           const roomId = nativeGroupRoomId(profile, row.id); const threadId = `thread-${roomId}`;
@@ -894,9 +897,11 @@
           const rpc = new RpcClient(coordinator.name); rpcRef.current = rpc;
           const caps = await screenRequest(rpc, "groups.capabilities", { profile: coordinator.name }, 8000); if (!caps?.driver || !Array.isArray(caps.methods) || !caps.methods.includes("groups.send")) throw new Error("El Gateway no tiene habilitado el driver nativo de grupos.");
           setCapabilities(caps);
-          const listing = await screenRequest(rpc, "groups.list", { profile: coordinator.name, limit: 500 }, 8000); let nativeRoom = (listing.rooms || []).find((item) => item.room_id === roomId);
+          const { findNativeRoom, assertNativeRoomMembers } = await import(`${ASSET}/group-membership.mjs`);
+          let nativeRoom = await findNativeRoom(roomId, ({limit, offset}) =>
+            screenRequest(rpc, "groups.list", {profile: coordinator.name, limit, offset}, 8000));
           if (!nativeRoom) nativeRoom = (await screenRequest(rpc, "groups.create", { profile: coordinator.name, room_id: roomId, name: row.name, members: memberInputs }, 12000)).room;
-          if (!nativeRoom) throw new Error("El Gateway no devolvió la sala nativa.");
+          assertNativeRoomMembers(names, nativeRoom);
           setRoom(nativeRoom); setPhase("live");
           const sync = async () => {
             if (!aliveRef.current || syncLockRef.current || !rpcRef.current) return; syncLockRef.current = true;
@@ -933,15 +938,17 @@
       if (!selected) return;
       setBusy(true); setError("");
       try {
-        const { isMembershipChanged, assertNativeMembershipEditable } = await import(`${ASSET}/group-membership.mjs`);
+        const { isMembershipChanged, findNativeRoom, assertNativeMembershipEditable } = await import(`${ASSET}/group-membership.mjs`);
         if (isMembershipChanged(selected.members || [], members)) {
-          // Hosted-room membership is immutable through the public Hermes group API.
-          // Fail closed if we cannot verify whether this room has been created.
-          const rpc = new RpcClient(profile);
-          let listing;
-          try { listing = await screenRequest(rpc, "groups.list", { profile, limit: 500 }, 8000); }
-          finally { try { rpc.close(); } catch (_) {} }
-          assertNativeMembershipEditable(selected.members || [], members, listing, nativeGroupRoomId(profile, selected.id));
+          const coordinator = nativeGroupCoordinator(bots, profile, selected.members || []);
+          if (!coordinator) throw new Error("No hay un perfil de Hermes disponible para verificar este grupo.");
+          const rpc = new RpcClient(coordinator.name);
+          let existingRoom;
+          try {
+            existingRoom = await findNativeRoom(nativeGroupRoomId(profile, selected.id), ({limit,offset}) =>
+              screenRequest(rpc, "groups.list", {profile: coordinator.name, limit, offset}, 8000));
+          } finally { try { rpc.close(); } catch (_) {} }
+          assertNativeMembershipEditable(selected.members || [], members, existingRoom);
         }
         const row = await fetchJSON(`/api/plugins/${PLUGIN}/groups/${encodeURIComponent(selected.id)}?profile=${encodeURIComponent(profile)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: selected.name, members, skills }) });
         await Promise.all(bots.filter((b) => members.includes(b.name)).flatMap((b) => availableSkills.filter((s) => skills.includes(s.name)).map((s) => api.toggleSkill(s.name, true, b.name))));
