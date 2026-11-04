@@ -17,6 +17,8 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -25,10 +27,12 @@ jobs:
           python-version: '3.11'
       - name: Install Python test dependencies
         run: python -m pip install --disable-pip-version-check pytest pytest-asyncio fastapi httpx python-multipart
+      - name: Rebuild source bundles (temporarily refresh working-tree SRI)
+        run: npm run build
       - name: Verify committed distribution integrity
         run: npm run verify
-      - name: Verify reproducible bundles
-        run: npm run build
+      - name: Verify pinned catalog release
+        run: npm run verify:catalog
       - name: Package deterministic release archive
         run: npm run pack
       - name: Run JavaScript tests
