@@ -38,7 +38,7 @@ class MockSynthesizer:
 class MultimodalBackendTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
-        root = Path(self.temp_dir.name)
+        root = Path(self.temp_dir.name).resolve()  # /var is a symlink to /private/var on macOS
         self.attach_root = root / "attachments"
         self.voice_source = root / "mock.webm"
         self.voice_source.write_bytes(b"RIFF fixture")
@@ -78,7 +78,7 @@ class MultimodalBackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mismatch.exception.status_code, 415)
 
     async def test_symlinked_profile_storage_is_rejected(self):
-        outside = Path(self.temp_dir.name) / "outside"
+        outside = Path(self.temp_dir.name).resolve() / "outside"
         outside.mkdir()
         profile_dir = self.attach_root / "researcher"
         self.attach_root.mkdir(parents=True, exist_ok=True)
