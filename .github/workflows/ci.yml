@@ -45,3 +45,27 @@ jobs:
           name: hermes-bots-console-${{ matrix.os }}
           path: dist/hermes-bots-console-0.5.0-rc.1.tar.gz
           if-no-files-found: error
+
+  browser-fixture:
+    name: Chromium fixture smoke (not authenticated Hermes)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install isolated browser test dependencies
+        run: npm install --no-save --no-package-lock react@18.3.1 react-dom@18.3.1 playwright@1.55.0
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run real browser against SDK fixture
+        run: node scripts/browser-smoke.mjs
+      - name: Upload fixture screenshots (not a product demo)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-fixture-screenshots
+          path: dist/browser-smoke-*.png
+          if-no-files-found: ignore
