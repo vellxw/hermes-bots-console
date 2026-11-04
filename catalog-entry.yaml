@@ -25,4 +25,4 @@ known_issues:
   - Repository: https://github.com/vellxw/hermes-bots-console
 integrity:
   manifest: dashboard/manifest.json
-  entry_sri: sha384-clslcCBwwnB0GG2onwJddZN8AhisiYEosNDGJs8Iz4Pch51gMfco9NGbWHyoBbcw
+  entry_sri: sha384-10hYRbvlNeg028KgRJmYdEM3AaxJGkrsXR40Au90o1TXROLn4TDWrFu+7rQB+Vxq

@@ -15,5 +15,6 @@ test('native group blocks membership edits before local write', () => {
 test('listing failure fails closed, new rooms are editable', () => {
   assert.throws(() => assertNativeMembershipEditable(['alpha'], ['beta'], null, 'room'), /verificar/);
   assert.equal(assertNativeMembershipEditable(['alpha'], ['beta'], {rooms: []}, 'room'), true);
+  assert.throws(() => assertNativeMembershipEditable(['alpha'], ['beta'], {rooms: [], has_more: true}, 'room'), /incompleta/);
   assert.equal(assertNativeMembershipEditable(['alpha'], ['alpha'], null, 'room'), true);
 });
