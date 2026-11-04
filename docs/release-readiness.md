@@ -7,7 +7,7 @@ This document tracks what the portable repository suite can prove and what still
 - `npm run verify`: manifests, SHA-384 entry integrity, required notices, secret/path markers and JavaScript syntax
 - `npm run verify:catalog`: compare the catalog's pinned tag with the actual tagged frontend bytes, using the local Git tags (`git fetch --tags` when necessary)
 - `npm run build`: reproduce versioned assets from readable sources
-- `npm run pack`: produce a deterministic tarball with only the active versioned frontend assets
+- `npm run pack`: produce a deterministic tarball with active frontend assets, including the native group policy module, and no CI/tests/scripts
 - `npm test`: portable JavaScript contracts (serialized because packaging tests rebuild shared assets)
 - `python -m pytest -q`: Python backend, profile safety, routing and persistence
 
@@ -29,6 +29,8 @@ CI is a cross-platform portability gate, **not** an authenticated browser smoke 
 - [ ] Select two harmless test profiles and verify their chats remain isolated
 - [ ] Create a group with 2 test bots, send a harmless message and verify `groups.log` events
 - [ ] After room creation, attempt to edit members: the UI must refuse the change without modifying local configuration
+- [ ] Switch from a busy/high-sequence group to a second room and verify the first room's events do not appear in the second
+- [ ] Force a failed `groups.send` operation and confirm the unsent draft is restored without overwriting newer typing
 - [ ] On a Linux gateway with Bot Desktop, observe one profile's display, explicitly acquire and release a human lease
 - [ ] Verify the mobile viewer, disconnect/reconnect, bot switching, timeout and memory-blocked states
 - [ ] Record redacted real screenshots/video only after actual authenticated validation
