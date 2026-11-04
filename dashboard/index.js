@@ -45,31 +45,34 @@
   function screenRequest(rpc, method, params, timeout = 12000, signal) {
     return new Promise((resolve, reject) => {
       let expired = false;
+      let timer;
+      const clear = () => { window.clearTimeout(timer); signal?.removeEventListener("abort", abort); };
       const abort = () => {
         if (expired) return;
         expired = true;
+        clear();
         try { rpc.close(); } catch (_) {}
         reject(screenLifecycleError("La operación del monitor fue cancelada.", "idle"));
       };
       if (signal?.aborted) { abort(); return; }
       signal?.addEventListener("abort", abort, { once: true });
-      const timer = window.setTimeout(() => {
+      timer = window.setTimeout(() => {
+        if (expired) return;
         expired = true;
-        signal?.removeEventListener("abort", abort);
-        // A timed-out RPC remains in the Gateway's request queue unless its transport is
-        // closed. Reusing that socket makes a slow display.start hold every later observe.
+        clear();
+        // Timed-out requests must not block the next Gateway operation.
         try { rpc.close(); } catch (_) {}
         reject(new Error("El Gateway tardó demasiado en responder. Pulsá Reconectar."));
       }, timeout);
-      rpc.request(method, params).then((value) => {
+      Promise.resolve().then(() => rpc.request(method, params)).then((value) => {
         if (expired) return;
-        window.clearTimeout(timer);
-        signal?.removeEventListener("abort", abort);
+        expired = true;
+        clear();
         resolve(value);
       }).catch((error) => {
         if (expired) return;
-        window.clearTimeout(timer);
-        signal?.removeEventListener("abort", abort);
+        expired = true;
+        clear();
         reject(error);
       });
     });
@@ -77,26 +80,31 @@
   function importWithTimeout(loader, timeout = 15000, signal) {
     return new Promise((resolve, reject) => {
       let settled = false;
-      const abort = () => { if (!settled) { settled = true; reject(screenLifecycleError("La carga del visor fue cancelada.", "idle")); } };
+      let timer;
+      const clear = () => { window.clearTimeout(timer); signal?.removeEventListener("abort", abort); };
+      const abort = () => {
+        if (settled) return;
+        settled = true;
+        clear();
+        reject(screenLifecycleError("La carga del visor fue cancelada.", "idle"));
+      };
       if (signal?.aborted) { abort(); return; }
       signal?.addEventListener("abort", abort, { once: true });
-      const timer = window.setTimeout(() => {
+      timer = window.setTimeout(() => {
         if (settled) return;
         settled = true;
-        signal?.removeEventListener("abort", abort);
+        clear();
         reject(new Error("noVNC tardó demasiado en cargar. Pulsá Reconectar."));
       }, timeout);
-      loader().then((value) => {
+      Promise.resolve().then(loader).then((value) => {
         if (settled) return;
         settled = true;
-        window.clearTimeout(timer);
-        signal?.removeEventListener("abort", abort);
+        clear();
         resolve(value);
       }).catch((error) => {
         if (settled) return;
         settled = true;
-        window.clearTimeout(timer);
-        signal?.removeEventListener("abort", abort);
+        clear();
         reject(error);
       });
     });
@@ -1081,9 +1089,12 @@
       const shift = Number(dragState.shifts?.[key] || 0); if (!shift) return undefined;
       return { transform: `translate3d(${zone === "pins" ? shift : 0}px, ${zone === "feed" ? shift : 0}px, 0)`, transition: "transform 160ms ease" };
     };
+    const headerBot = bots.find((candidate) => candidate.name === profile) || bots.find((candidate) => candidate.is_default);
+    const headerLabel = headerBot ? profileLabel(headerBot) : "Hermes";
+    const headerInitial = headerLabel.trim().slice(0, 1).toUpperCase() || "H";
     const headerSearch = searchOpen ? h("label", { className: "hb-roster-search" }, searchIcon(), h("input", { autoFocus: true, value: search, placeholder: "Buscar", "aria-label": "Buscar bots", onChange: (event) => setSearch(event.target.value) })) : iconButton("Buscar bots", searchIcon(), () => setSearchOpen(true), "hb-round-action");
     return h("div", { className: "hb-roster-screen" },
-      h("header", { className: "hb-roster-header" }, h("div", { className: "hb-user-mark", "aria-label": "Perfil de Franco" }, "F"), h("div", { className: "hb-roster-actions" }, headerSearch, iconButton("Crear bot", plusIcon(), onCreate, "hb-round-action"))),
+      h("header", { className: "hb-roster-header" }, h("div", { className: "hb-user-mark", "aria-label": `Perfil ${headerLabel}` }, headerInitial), h("div", { className: "hb-roster-actions" }, headerSearch, iconButton("Crear bot", plusIcon(), onCreate, "hb-round-action"))),
       h(PinStrip, { bots, groups, meta, onChat: (bot) => navigate({ view: "chat", profile: bot.name }), onRequestDelete: requestDelete, onHoldStart: handleHoldStart, onHoldEnd: handleHoldEnd, onGroup: (group) => onGroup?.(group), onReorderStart: handleReorderStart, onReorderMove: handleReorderMove, onReorderEnd: handleReorderEnd, draggingKey: dragState.key, holdingKey, dragStyleFor }),
       error ? h("div", { className: "hb-roster-error" }, error) : null,
       loading ? h("div", { className: "hb-roster-loading" }, "Cargando…") : null,
