@@ -181,7 +181,8 @@ class TurboStore:
         self.root.mkdir(parents=True, exist_ok=True)
         fd, temp_name = tempfile.mkstemp(prefix=f".{state['profile']}.", suffix=".tmp", dir=self.root)
         try:
-            os.fchmod(fd, 0o600)
+            if hasattr(os, 'fchmod'):
+                os.fchmod(fd, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 json.dump(durable, handle, ensure_ascii=False, indent=2)
                 handle.write("\n")

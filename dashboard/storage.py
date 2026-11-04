@@ -81,7 +81,8 @@ def write_json_atomic(path: str | Path, value: Any) -> None:
     _reject_symlink(destination)
     descriptor, temp_name = tempfile.mkstemp(prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent)
     try:
-        os.fchmod(descriptor, 0o600)
+        if hasattr(os, 'fchmod'):
+            os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             json.dump(value, handle, ensure_ascii=False, indent=2)
             handle.write("\n")

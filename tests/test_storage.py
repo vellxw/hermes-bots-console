@@ -19,9 +19,10 @@ def test_profile_storage_is_hermes_home_scoped_and_not_installed_plugin(tmp_path
     assert root == hermes_home / "profiles" / "researcher" / "plugin-data" / "hermes-bots-console"
     assert "/plugins/" not in root.as_posix()
     assert root.is_dir()
-    assert stat.S_IMODE(root.stat().st_mode) == 0o700
-    assert stat.S_IMODE((hermes_home / "profiles").stat().st_mode) == 0o700
-    assert stat.S_IMODE((hermes_home / "profiles" / "researcher" / "plugin-data").stat().st_mode) == 0o700
+    if os.name != 'nt':  # Windows reports synthetic permission bits, not POSIX modes
+        assert stat.S_IMODE(root.stat().st_mode) == 0o700
+        assert stat.S_IMODE((hermes_home / "profiles").stat().st_mode) == 0o700
+        assert stat.S_IMODE((hermes_home / "profiles" / "researcher" / "plugin-data").stat().st_mode) == 0o700
 
 
 def test_atomic_json_write_is_private_and_replaces_existing_data(tmp_path):
@@ -29,7 +30,8 @@ def test_atomic_json_write_is_private_and_replaces_existing_data(tmp_path):
 
     write_json_atomic(destination, {"version": 1})
     assert json.loads(destination.read_text()) == {"version": 1}
-    assert stat.S_IMODE(destination.stat().st_mode) == 0o600
+    if os.name != 'nt':
+        assert stat.S_IMODE(destination.stat().st_mode) == 0o600
 
     write_json_atomic(destination, {"version": 2, "items": ["safe"]})
     assert json.loads(destination.read_text()) == {"version": 2, "items": ["safe"]}
